@@ -163,8 +163,8 @@ function TreeNode({ node, depth, activeFile, onOpenFile, onContextMenu, onCreate
             defaultValue={folderName}
             className="flex-1 text-sm bg-transparent outline-none"
             style={{
-              fontSize: depth === 0 ? '0.875rem' : '0.8rem',
-              fontWeight: depth === 0 ? 600 : 500,
+              fontSize: '0.82rem',
+              fontWeight: 500,
               color: 'var(--text-primary)',
               borderBottom: '1px solid var(--accent-light)',
               minWidth: 0,
@@ -180,9 +180,9 @@ function TreeNode({ node, depth, activeFile, onOpenFile, onContextMenu, onCreate
           <span
             className="flex-1 truncate"
             style={{
-              fontSize: depth === 0 ? '0.875rem' : '0.8rem',
-              fontWeight: depth === 0 ? 600 : 500,
-              color: isActive ? 'var(--text-primary)' : depth === 0 ? 'var(--accent-text)' : 'var(--text-muted)',
+              fontSize: '0.82rem',
+              fontWeight: 500,
+              color: isActive ? 'var(--text-primary)' : 'var(--text-muted)',
             }}
             onClick={() => rootFile && onOpenFile(rootFile)}
             onDoubleClick={handleFolderDoubleClick}
@@ -236,7 +236,7 @@ function TreeNode({ node, depth, activeFile, onOpenFile, onContextMenu, onCreate
                   }}
                   onMouseEnter={e => { if (!isFileActive) e.currentTarget.style.background = 'var(--glass-bg-strong)' }}
                   onMouseLeave={e => { if (!isFileActive) e.currentTarget.style.background = 'transparent' }}
-                  title="Double-click to add a sub-note"
+                  title="Double-click to add a child note"
                 >
                   <span className="text-xs opacity-40 flex-shrink-0">◦</span>
                   <span className="truncate text-sm">{file.name}</span>
@@ -245,7 +245,7 @@ function TreeNode({ node, depth, activeFile, onOpenFile, onContextMenu, onCreate
                 {inlineTarget === file.path && (
                   <InlineCreateForm
                     indent={indent + 36}
-                    placeholder="Sub-note name…"
+                    placeholder="Child note name…"
                     onSubmit={name => submitSubNote(file, name)}
                     onCancel={() => setInlineTarget(null)}
                   />
@@ -284,6 +284,7 @@ export default function Sidebar({
   onChangeVault, onRefresh, showGraph, onToggleGraph, showAI, onToggleAI,
   showWhiteboard, onToggleWhiteboard, showKanban, onToggleKanban, showNotes, onShowNotes, theme, onSetTheme, onMoveFile,
   onArchiveTopic, onUnarchiveTopic,
+  vaults = [], activeVaultId, onSwitchVault, onAddVault, onRemoveVault,
 }) {
   const [createMode, setCreateMode] = useState(null)
   const [newThemeName, setNewThemeName] = useState('')
@@ -304,6 +305,7 @@ export default function Sidebar({
   const [recentFiles, setRecentFiles] = useState(() => {
     try { return JSON.parse(localStorage.getItem('onyx-recent-files') || '[]') } catch { return [] }
   })
+  const [showVaultList, setShowVaultList] = useState(false)
 
   // Track recently opened files
   useEffect(() => {
@@ -419,6 +421,9 @@ export default function Sidebar({
     } else if (selectedTheme) {
       parentFolder = selectedTheme
       backLink = selectedTheme
+    } else if (topicNames[0]) {
+      parentFolder = topicNames[0]
+      backLink = topicNames[0]
     } else {
       return
     }
@@ -429,7 +434,7 @@ export default function Sidebar({
     )
     setNewNoteName('')
     setCreateMode(null)
-  }, [newNoteName, selectedTheme, activeFile, onCreateFile])
+  }, [newNoteName, selectedTheme, activeFile, onCreateFile, topicNames])
 
   const handleCreateJournal = useCallback(async () => {
     const today = new Date()
@@ -602,6 +607,64 @@ export default function Sidebar({
         </div>
       </div>
 
+      {/* Vault switcher — shown when multiple vaults exist or user opens the list */}
+      {(vaults.length > 1 || showVaultList) && (
+        <div style={{ borderBottom: '1px solid var(--glass-border)', padding: '4px 6px 6px' }}>
+          <div className="flex items-center justify-between px-1 pb-1">
+            <span className="text-[10px] uppercase tracking-widest font-semibold" style={{ color: 'var(--text-dim)' }}>Vaults</span>
+            <button
+              onClick={() => { if (onAddVault) onAddVault() }}
+              className="text-[10px] px-1.5 py-0.5 rounded transition-all"
+              style={{ color: 'var(--text-muted)', background: 'transparent', border: 'none' }}
+              onMouseEnter={e => { e.currentTarget.style.color = 'var(--accent-text)' }}
+              onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-muted)' }}
+              title="Add vault"
+            >+ Add</button>
+          </div>
+          {vaults.map(vault => {
+            const isActive = vault.id === activeVaultId
+            return (
+              <div key={vault.id} className="flex items-center gap-1 rounded-md px-1.5 py-1 my-px group transition-all"
+                style={{
+                  background: isActive ? 'var(--accent-light)' : 'transparent',
+                  border: isActive ? '1px solid var(--accent-glow)' : '1px solid transparent',
+                  cursor: isActive ? 'default' : 'pointer',
+                }}
+                onClick={() => !isActive && onSwitchVault && onSwitchVault(vault.id)}
+                onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = 'var(--glass-bg-strong)' }}
+                onMouseLeave={e => { if (!isActive) e.currentTarget.style.background = 'transparent' }}
+              >
+                <span style={{ color: isActive ? 'var(--accent)' : 'var(--text-dim)', display:'flex', flexShrink:0 }}><IcFolder/></span>
+                <span className="flex-1 truncate text-xs" style={{ color: isActive ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                  {vault.name}
+                </span>
+                {isActive && <span style={{ color: 'var(--accent)', fontSize: '0.55rem' }}>●</span>}
+                {!isActive && onRemoveVault && (
+                  <button
+                    onClick={e => { e.stopPropagation(); onRemoveVault(vault.id) }}
+                    className="opacity-0 group-hover:opacity-100 text-[10px] px-1 transition-opacity"
+                    style={{ color: 'var(--text-dim)', background: 'none', border: 'none' }}
+                    title="Remove vault from workspace"
+                  >✕</button>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+      {vaults.length <= 1 && (
+        <div className="px-3 py-1 flex justify-end">
+          <button
+            onClick={() => { setShowVaultList(v => !v) }}
+            className="text-[9px] transition-all"
+            style={{ color: 'var(--text-dim)', background: 'none', border: 'none' }}
+            onMouseEnter={e => { e.currentTarget.style.color = 'var(--text-muted)' }}
+            onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-dim)' }}
+            title="Manage vaults"
+          >{showVaultList ? 'hide vaults' : '+ add vault'}</button>
+        </div>
+      )}
+
       {/* Search */}
       <div className="px-2 py-2" style={{ borderBottom: '1px solid var(--glass-border)' }}>
         <input type="text" placeholder="Search notes..." value={search}
@@ -617,7 +680,7 @@ export default function Sidebar({
       <div className="flex-1 overflow-y-auto py-1">
         {files.length === 0 ? (
           <div className="px-4 py-8 text-center">
-            <p className="text-sm" style={{ color:'var(--text-dim)' }}>No notes yet — create a topic to get started</p>
+            <p className="text-sm" style={{ color:'var(--text-dim)' }}>No notes yet — create a folder to get started</p>
           </div>
         ) : (
           <>
@@ -633,7 +696,7 @@ export default function Sidebar({
             <div className="px-2 py-2 flex flex-col gap-1.5" style={{ borderBottom: '1px solid var(--glass-border)' }}>
               {createMode === null && (
                 <div className="flex gap-1">
-                  {[{label:'+ Topic',mode:'theme',title:'New topic'},{label:'+ Note',mode:'note',title:'New note'}].map(btn=>(
+                  {[{label:'+ Folder',mode:'theme',title:'New folder'},{label:'+ Note',mode:'note',title:'New note'}].map(btn=>(
                     <button key={btn.mode}
                       onClick={() => { setCreateMode(btn.mode); if(btn.mode==='note' && !activeFile) setSelectedTheme(topicNames[0]||'') }}
                       title={btn.title}
@@ -653,9 +716,9 @@ export default function Sidebar({
               )}
               {createMode === 'theme' && (
                 <form onSubmit={handleCreateTheme} className="flex flex-col gap-1.5">
-                  <span className="text-[10px] uppercase tracking-widest font-semibold" style={{ color:'var(--text-muted)' }}>New Topic</span>
+                  <span className="text-[10px] uppercase tracking-widest font-semibold" style={{ color:'var(--text-muted)' }}>New Folder</span>
                   <div className="flex gap-1">
-                    <input autoFocus type="text" placeholder="Topic name..."
+                    <input autoFocus type="text" placeholder="Folder name..."
                       value={newThemeName} onChange={e=>setNewThemeName(e.target.value)}
                       onKeyDown={e=>e.key==='Escape'&&cancelCreate()}
                       className="flex-1 text-sm px-2 py-1 rounded-md focus:outline-none"
@@ -671,7 +734,7 @@ export default function Sidebar({
                   <span className="text-[10px] uppercase tracking-widest font-semibold" style={{ color:'var(--text-muted)' }}>
                     New Note{noteContext ? <span style={{ color:'var(--accent-text)', fontWeight:400, textTransform:'none' }}> inside <em>{noteContext}</em></span> : ''}
                   </span>
-                  {/* If no active file context, show topic dropdown */}
+                  {/* If no active file context, show folder dropdown */}
                   {!(activeFile && activeFile.folder !== '' && activeFile.folder !== 'Journal') && (
                     topicNames.length > 0 ? (
                       <select value={selectedTheme} onChange={e=>setSelectedTheme(e.target.value)}
@@ -680,7 +743,7 @@ export default function Sidebar({
                       >
                         {topicNames.map(t=><option key={t} value={t} style={{ background:'var(--option-bg)' }}>{t}</option>)}
                       </select>
-                    ) : <span className="text-xs" style={{ color:'var(--text-muted)' }}>Create a Topic first</span>
+                    ) : <span className="text-xs" style={{ color:'var(--text-muted)' }}>Create a Folder first</span>
                   )}
                   <div className="flex gap-1">
                     <input autoFocus type="text" placeholder="Note name..."
@@ -708,7 +771,7 @@ export default function Sidebar({
                   onMouseEnter={e => e.currentTarget.style.color = '#c4b5fd'}
                   onMouseLeave={e => e.currentTarget.style.color = 'var(--accent-text)'}
                 >
-                  Topics
+                  Folders
                 </button>
                 <span className="text-[9px] opacity-40" style={{ color:'var(--text-dim)' }}>drag to reorder · drag notes to folders</span>
               </div>

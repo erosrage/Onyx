@@ -115,7 +115,34 @@ ipcMain.handle('vault:read', async (_, vaultPath) => {
 
     walk(vaultPath, vaultPath)
     files.sort((a, b) => a.name.localeCompare(b.name))
-    return { success: true, files, folders: [...folderSet].sort() }
+    const sortedFolders = [...folderSet].sort()
+
+    // Build unified Node list with parentId for the new hierarchical model
+    const nodes = []
+    for (const folderRelPath of sortedFolders) {
+      const segments = folderRelPath.split('/')
+      const parentId = segments.length > 1 ? segments.slice(0, -1).join('/') : null
+      nodes.push({
+        id: folderRelPath,
+        parentId,
+        type: 'folder',
+        title: segments[segments.length - 1],
+        path: path.join(vaultPath, folderRelPath),
+        order: 0,
+      })
+    }
+    for (const file of files) {
+      nodes.push({
+        id: file.relativePath.replace(/\.md$/, ''),
+        parentId: file.folder || null,
+        type: 'note',
+        title: file.name,
+        path: file.path,
+        order: 0,
+      })
+    }
+
+    return { success: true, files, folders: sortedFolders, nodes }
   } catch (err) {
     return { success: false, error: err.message }
   }
@@ -246,6 +273,23 @@ ipcMain.handle('vault:unwatch', async () => {
     watcher = null
   }
   return { success: true }
+})
+
+// ─── Workspace / Multi-Vault Management ──────────────────────────────────────
+const workspacesConfigPath = path.join(app.getPath('userData'), 'workspaces.json')
+
+ipcMain.handle('workspaces:read', () => {
+  try { return JSON.parse(fs.readFileSync(workspacesConfigPath, 'utf-8')) }
+  catch { return { workspaces: [{ id: 'default', name: 'Default Workspace' }], vaults: [], activeVaultId: null } }
+})
+
+ipcMain.handle('workspaces:save', (_, data) => {
+  try {
+    fs.writeFileSync(workspacesConfigPath, JSON.stringify(data, null, 2), 'utf-8')
+    return { success: true }
+  } catch (err) {
+    return { success: false, error: err.message }
+  }
 })
 
 // Show confirmation dialog

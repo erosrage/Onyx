@@ -25,6 +25,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Dialog
   confirmDialog: (message, detail) => ipcRenderer.invoke('dialog:confirm', message, detail),
+
+  // Workspace / multi-vault management
+  readWorkspaces: () => ipcRenderer.invoke('workspaces:read'),
+  saveWorkspaces: (data) => ipcRenderer.invoke('workspaces:save', data),
 })
 
 contextBridge.exposeInMainWorld('terminalAPI', {

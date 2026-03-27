@@ -12,9 +12,13 @@ export default function App() {
   const [vaultPath, setVaultPath] = useState(() => sessionStorage.getItem('vaultPath') || null)
   const [files, setFiles] = useState([])
   const [folders, setFolders] = useState([])
+  const [nodes, setNodes] = useState([])
   const [activeFile, setActiveFile] = useState(null)
   const [sidebarWidth, setSidebarWidth] = useState(260)
   const [isResizing, setIsResizing] = useState(false)
+  // Multi-vault workspace state
+  const [vaults, setVaults] = useState([])
+  const [activeVaultId, setActiveVaultId] = useState(null)
   const [showGraph, setShowGraph] = useState(true)
   const [showAI, setShowAI] = useState(false)
   const [showWhiteboard, setShowWhiteboard] = useState(false)
@@ -36,6 +40,22 @@ export default function App() {
     setTheme(id)
   }, [])
 
+  // Load workspaces config on startup; restores previous vault sessions
+  useEffect(() => {
+    window.electronAPI.readWorkspaces().then(ws => {
+      if (ws.vaults && ws.vaults.length > 0) {
+        setVaults(ws.vaults)
+        const vid = ws.activeVaultId || ws.vaults[0].id
+        setActiveVaultId(vid)
+        const vault = ws.vaults.find(v => v.id === vid)
+        if (vault && !sessionStorage.getItem('vaultPath')) {
+          sessionStorage.setItem('vaultPath', vault.rootPath)
+          setVaultPath(vault.rootPath)
+        }
+      }
+    }).catch(() => {})
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
   const loadVault = useCallback(async () => {
     if (!vaultPath) return
     try {
@@ -43,6 +63,7 @@ export default function App() {
       if (result.success) {
         setFiles(result.files)
         setFolders(result.folders || [])
+        setNodes(result.nodes || [])
       } else {
         console.error('loadVault: vault:read failed —', result.error)
       }
@@ -59,14 +80,57 @@ export default function App() {
     return cleanup
   }, [vaultPath, loadVault])
 
+  const saveWorkspaces = useCallback(async (updatedVaults, newActiveId) => {
+    await window.electronAPI.saveWorkspaces({
+      workspaces: [{ id: 'default', name: 'Default' }],
+      vaults: updatedVaults,
+      activeVaultId: newActiveId,
+    })
+  }, [])
+
   const handleSelectVault = async () => {
-    const path = await window.electronAPI.selectVault()
-    if (path) {
-      sessionStorage.setItem('vaultPath', path)
-      setVaultPath(path)
+    const selectedPath = await window.electronAPI.selectVault()
+    if (!selectedPath) return
+    const vaultName = selectedPath.split(/[\\/]/).pop()
+    const existing = vaults.find(v => v.rootPath === selectedPath)
+    const vault = existing || { id: `vault-${Date.now()}`, workspaceId: 'default', name: vaultName, rootPath: selectedPath }
+    const updatedVaults = existing ? vaults : [...vaults, vault]
+    setVaults(updatedVaults)
+    setActiveVaultId(vault.id)
+    sessionStorage.setItem('vaultPath', selectedPath)
+    setVaultPath(selectedPath)
+    setActiveFile(null)
+    await saveWorkspaces(updatedVaults, vault.id)
+  }
+
+  const handleSwitchVault = useCallback(async (vaultId) => {
+    const vault = vaults.find(v => v.id === vaultId)
+    if (!vault) return
+    setActiveVaultId(vaultId)
+    sessionStorage.setItem('vaultPath', vault.rootPath)
+    setVaultPath(vault.rootPath)
+    setActiveFile(null)
+    await saveWorkspaces(vaults, vaultId)
+  }, [vaults, saveWorkspaces])
+
+  const handleRemoveVault = useCallback(async (vaultId) => {
+    const updatedVaults = vaults.filter(v => v.id !== vaultId)
+    const newActiveId = activeVaultId === vaultId ? (updatedVaults[0]?.id || null) : activeVaultId
+    setVaults(updatedVaults)
+    if (activeVaultId === vaultId) {
+      setActiveVaultId(newActiveId)
+      const next = updatedVaults[0]
+      if (next) {
+        setVaultPath(next.rootPath)
+        sessionStorage.setItem('vaultPath', next.rootPath)
+      } else {
+        setVaultPath(null)
+        sessionStorage.removeItem('vaultPath')
+      }
       setActiveFile(null)
     }
-  }
+    await saveWorkspaces(updatedVaults, newActiveId)
+  }, [vaults, activeVaultId, saveWorkspaces])
 
   const handleOpenFile = useCallback((file) => {
     setActiveFile(file)
@@ -151,12 +215,18 @@ export default function App() {
     }
   }, [vaultPath, loadVault, activeFile])
 
+  // Move a file/node to a new parent folder (targetFolder is a relative vault path).
+  // Works via parentId semantics: reassigns the file's parent without changing its type.
   const handleMoveFile = useCallback(async (file, targetFolder) => {
-    const folderParts = file.folder.split('/')
-    const topLevelFolder = folderParts[0]
-    if (topLevelFolder === targetFolder) return
+    if (!file || !targetFolder) return
+    // No-op if already in targetFolder
+    if (file.folder === targetFolder) return
+    // Also no-op if only the top-level differs but node is nested under same branch
+    const folderParts = file.folder ? file.folder.split('/') : []
+    if (folderParts[0] === targetFolder && folderParts.length === 1) return
+
     if (folderParts.length > 1) {
-      // Sub-folder note: move entire directory (e.g., Work/NoteName → Personal/NoteName)
+      // Nested directory note: move entire directory to new parent
       const noteFolderName = folderParts[folderParts.length - 1]
       const oldDirPath = `${vaultPath}/${file.folder}`
       const newDirPath = `${vaultPath}/${targetFolder}/${noteFolderName}`
@@ -167,7 +237,7 @@ export default function App() {
         setActiveFile(prev => prev ? { ...prev, path: `${newDirPath}/${file.name}.md`, folder: `${targetFolder}/${noteFolderName}` } : null)
       }
     } else {
-      // Flat file: read, create at new location, delete old
+      // Flat file: read, create at new parent location, delete old
       const newPath = `${vaultPath}/${targetFolder}/${file.name}.md`
       const readResult = await window.electronAPI.readFile(file.path)
       if (!readResult.success) return
@@ -246,6 +316,11 @@ export default function App() {
               onMoveFile={handleMoveFile}
               onArchiveTopic={handleArchiveTopic}
               onUnarchiveTopic={handleUnarchiveTopic}
+              vaults={vaults}
+              activeVaultId={activeVaultId}
+              onSwitchVault={handleSwitchVault}
+              onAddVault={handleSelectVault}
+              onRemoveVault={handleRemoveVault}
             />
           </div>
 
