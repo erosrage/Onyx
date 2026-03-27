@@ -163,6 +163,26 @@ ipcMain.handle('file:delete', async (_, filePath) => {
   }
 })
 
+// Ensure folder exists (creates it if missing)
+ipcMain.handle('folder:ensure', async (_, folderPath) => {
+  try {
+    await fsPromises.mkdir(folderPath, { recursive: true })
+    return { success: true }
+  } catch (err) {
+    return { success: false, error: err.message }
+  }
+})
+
+// Delete folder recursively
+ipcMain.handle('folder:delete', async (_, folderPath) => {
+  try {
+    await fsPromises.rm(folderPath, { recursive: true, force: true })
+    return { success: true }
+  } catch (err) {
+    return { success: false, error: err.message }
+  }
+})
+
 // Rename/move file
 ipcMain.handle('file:rename', async (_, oldPath, newPath) => {
   try {

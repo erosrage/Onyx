@@ -15,12 +15,12 @@ export default function App() {
   const [activeFile, setActiveFile] = useState(null)
   const [sidebarWidth, setSidebarWidth] = useState(260)
   const [isResizing, setIsResizing] = useState(false)
-  const [showGraph, setShowGraph] = useState(false)
+  const [showGraph, setShowGraph] = useState(true)
   const [showAI, setShowAI] = useState(false)
   const [showWhiteboard, setShowWhiteboard] = useState(false)
   const [showKanban, setShowKanban] = useState(false)
   // Track which panels have been opened at least once so they stay mounted (preserve state)
-  const [everOpened, setEverOpened] = useState({ graph: false, ai: false, whiteboard: false, kanban: false })
+  const [everOpened, setEverOpened] = useState({ graph: true, ai: false, whiteboard: false, kanban: false })
 
   useEffect(() => {
     setEverOpened(prev => ({
@@ -118,6 +118,39 @@ export default function App() {
     }
   }, [activeFile, loadVault])
 
+  const handleArchiveTopic = useCallback(async (folderRelPath) => {
+    const src = `${vaultPath}/${folderRelPath}`
+    const dst = `${vaultPath}/Archive/${folderRelPath}`
+    await window.electronAPI.ensureFolder(`${vaultPath}/Archive`)
+    const result = await window.electronAPI.renameFile(src, dst)
+    if (result.success) {
+      await loadVault()
+      if (activeFile?.folder === folderRelPath || activeFile?.folder?.startsWith(folderRelPath + '/')) {
+        setActiveFile(null)
+      }
+    }
+  }, [vaultPath, loadVault, activeFile])
+
+  const handleUnarchiveTopic = useCallback(async (archivedFolderRelPath) => {
+    // archivedFolderRelPath is e.g. 'Archive/Work' → restore to 'Work'
+    const topicName = archivedFolderRelPath.replace(/^Archive\//, '')
+    const src = `${vaultPath}/${archivedFolderRelPath}`
+    const dst = `${vaultPath}/${topicName}`
+    const result = await window.electronAPI.renameFile(src, dst)
+    if (result.success) await loadVault()
+  }, [vaultPath, loadVault])
+
+  const handleDeleteTopic = useCallback(async (folderRelPath) => {
+    const folderPath = `${vaultPath}/${folderRelPath}`
+    const result = await window.electronAPI.deleteFolder(folderPath)
+    if (result.success) {
+      await loadVault()
+      if (activeFile?.folder === folderRelPath || activeFile?.folder?.startsWith(folderRelPath + '/')) {
+        setActiveFile(null)
+      }
+    }
+  }, [vaultPath, loadVault, activeFile])
+
   const handleMoveFile = useCallback(async (file, targetFolder) => {
     const folderParts = file.folder.split('/')
     const topLevelFolder = folderParts[0]
@@ -195,6 +228,7 @@ export default function App() {
               onOpenFile={handleOpenFile}
               onCreateFile={handleCreateFile}
               onDeleteFile={handleDeleteFile}
+              onDeleteTopic={handleDeleteTopic}
               onChangeVault={handleSelectVault}
               onRefresh={loadVault}
               showGraph={showGraph}
@@ -210,6 +244,8 @@ export default function App() {
               theme={theme}
               onSetTheme={applyTheme}
               onMoveFile={handleMoveFile}
+              onArchiveTopic={handleArchiveTopic}
+              onUnarchiveTopic={handleUnarchiveTopic}
             />
           </div>
 
@@ -249,7 +285,7 @@ export default function App() {
             {/* Graph — stays mounted after first open */}
             {everOpened.graph && (
               <div className="absolute inset-0" style={{ display: showGraph ? 'block' : 'none' }}>
-                <GraphView files={files} activeFile={activeFile} onOpenFile={handleOpenFile} onCreateFile={handleCreateFile} theme={theme}
+                <GraphView files={files} activeFile={activeFile} onOpenFile={handleOpenFile} onCreateFile={handleCreateFile} theme={theme} onArchiveTopic={handleArchiveTopic}
                   onDeleteFiles={async (paths) => {
                     for (const p of paths) await window.electronAPI.deleteFile(p)
                     await loadVault()

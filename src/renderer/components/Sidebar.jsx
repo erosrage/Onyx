@@ -26,6 +26,7 @@ const CUSTOM_THEMES = [
   { id: 'sand',    label: 'Sand',    bg: '#faf5ec', accent: '#b45309' },
 ]
 const CUSTOM_THEME_IDS = new Set(CUSTOM_THEMES.map(t => t.id))
+const SYSTEM_FOLDERS = new Set(['Journal', 'Tags', 'assets', 'whiteboards', 'Archive'])
 
 // ── Build recursive tree from flat file list ──────────────────────────────────
 // `allFolders` = the complete folder list from vault:read (includes empty dirs)
@@ -279,15 +280,17 @@ function TreeNode({ node, depth, activeFile, onOpenFile, onContextMenu, onCreate
 }
 
 export default function Sidebar({
-  vaultPath, files, folders = [], activeFile, onOpenFile, onCreateFile, onDeleteFile,
+  vaultPath, files, folders = [], activeFile, onOpenFile, onCreateFile, onDeleteFile, onDeleteTopic,
   onChangeVault, onRefresh, showGraph, onToggleGraph, showAI, onToggleAI,
   showWhiteboard, onToggleWhiteboard, showKanban, onToggleKanban, showNotes, onShowNotes, theme, onSetTheme, onMoveFile,
+  onArchiveTopic, onUnarchiveTopic,
 }) {
   const [createMode, setCreateMode] = useState(null)
   const [newThemeName, setNewThemeName] = useState('')
   const [newNoteName, setNewNoteName] = useState('')
   const [selectedTheme, setSelectedTheme] = useState('')
   const [contextMenu, setContextMenu] = useState(null)
+  const [archiveOpen, setArchiveOpen] = useState(false)
   const [search, setSearch] = useState('')
   const [collapsed, setCollapsed] = useState({})
   const [noteOrder, setNoteOrder] = useState(() => {
@@ -325,10 +328,10 @@ export default function Sidebar({
   const topicNames = useMemo(() => {
     // Folders from the vault:read response (authoritative)
     const fromVault = folders
-      .filter(f => !f.includes('/') && f !== 'Journal' && f !== 'Tags')
+      .filter(f => !f.includes('/') && !SYSTEM_FOLDERS.has(f))
     // Also include any top-level folder implied by a file's folder field (covers in-app creates before next full read)
     const fromFiles = regularFiles
-      .filter(f => f.folder !== '' && !f.folder.includes('/'))
+      .filter(f => f.folder !== '' && !f.folder.includes('/') && !SYSTEM_FOLDERS.has(f.folder))
       .map(f => f.folder)
     return [...new Set([...fromVault, ...fromFiles])].sort()
   }, [folders, regularFiles])
@@ -445,8 +448,26 @@ export default function Sidebar({
     e.preventDefault(); e.stopPropagation(); setContextMenu({ x: e.clientX, y: e.clientY, file, folder, folderName })
   }, [])
   const handleDelete = useCallback(async () => {
-    if (!contextMenu) return; await onDeleteFile(contextMenu.file); setContextMenu(null)
-  }, [contextMenu, onDeleteFile])
+    if (!contextMenu) return
+    if (contextMenu.folder) {
+      await onDeleteTopic(contextMenu.folder)
+    } else if (contextMenu.file) {
+      await onDeleteFile(contextMenu.file)
+    }
+    setContextMenu(null)
+  }, [contextMenu, onDeleteFile, onDeleteTopic])
+
+  const handleArchive = useCallback(async () => {
+    if (!contextMenu || !onArchiveTopic) return
+    const topicFolder = contextMenu.folder || contextMenu.file?.folder?.split('/')[0] || null
+    if (!topicFolder) return
+    const ok = await window.electronAPI.confirmDialog(
+      `Archive "${topicFolder}"?`,
+      `This will move "${topicFolder}" and all its notes to the Archive folder.`
+    )
+    if (ok) await onArchiveTopic(topicFolder)
+    setContextMenu(null)
+  }, [contextMenu, onArchiveTopic])
 
   const handleRenameFolder = useCallback(async (folder, oldName, newName) => {
     setRenamingFolder(null)
@@ -504,8 +525,8 @@ export default function Sidebar({
     >
       {/* Vault header */}
       <div className="flex items-center justify-between px-3 py-2.5" style={{ borderBottom: '1px solid var(--glass-border)' }}>
-        <div className="flex items-center gap-2 min-w-0">
-          <span style={{ color: 'var(--accent)', display: 'flex' }}><IcFolder/></span>
+        <div className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
+          <span style={{ color: 'var(--accent)', display: 'flex', flexShrink: 0 }}><IcFolder/></span>
           <span className="text-sm font-semibold truncate tracking-tight" style={{ color: 'var(--text-primary)' }} title={vaultPath}>
             {vaultName}
           </span>
@@ -514,26 +535,27 @@ export default function Sidebar({
           {/* Dark / Light / Custom segmented control */}
           <div className="relative">
             <div className="flex p-0.5 rounded-lg" style={{ background: 'var(--input-bg)', border: '1px solid var(--glass-border)' }}>
-              {[{t:'dark',ic:<IcMoon/>},{t:'light',ic:<IcSun/>}].map(({t,ic})=>(
+              {[{t:'dark',ic:<IcMoon/>,title:'Dark theme'},{t:'light',ic:<IcSun/>,title:'Light theme'}].map(({t,ic,title})=>(
                 <button key={t} onClick={() => { onSetTheme(t); setShowThemePicker(false) }}
-                  className="flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium tracking-wide transition-all duration-150 capitalize"
+                  title={title}
+                  className="flex items-center justify-center w-6 h-6 rounded-md transition-all duration-150"
                   style={theme===t
                     ? {background:'var(--accent-gradient)',color:'#fff',boxShadow:'0 1px 4px var(--accent-glow)'}
                     : {color:'var(--text-muted)'}}
                   onMouseEnter={e => { if(theme!==t) e.currentTarget.style.color='var(--text-primary)' }}
                   onMouseLeave={e => { if(theme!==t) e.currentTarget.style.color='var(--text-muted)' }}
-                >{ic}{t}</button>
+                >{ic}</button>
               ))}
               <button
                 onClick={() => setShowThemePicker(s => !s)}
-                className="flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium tracking-wide transition-all duration-150"
+                className="flex items-center justify-center w-6 h-6 rounded-md transition-all duration-150"
                 style={CUSTOM_THEME_IDS.has(theme) || showThemePicker
                   ? {background:'var(--accent-gradient)',color:'#fff',boxShadow:'0 1px 4px var(--accent-glow)'}
                   : {color:'var(--text-muted)'}}
                 onMouseEnter={e => { if(!CUSTOM_THEME_IDS.has(theme) && !showThemePicker) e.currentTarget.style.color='var(--text-primary)' }}
                 onMouseLeave={e => { if(!CUSTOM_THEME_IDS.has(theme) && !showThemePicker) e.currentTarget.style.color='var(--text-muted)' }}
                 title="Custom themes"
-              ><IcPalette/>custom</button>
+              ><IcPalette/></button>
             </div>
             {showThemePicker && (
               <div className="absolute right-0 top-full mt-1.5 z-50 p-2 rounded-xl"
@@ -591,74 +613,6 @@ export default function Sidebar({
         />
       </div>
 
-      {/* Create bar */}
-      <div className="px-2 py-2 flex flex-col gap-1.5" style={{ borderBottom: '1px solid var(--glass-border)' }}>
-        {createMode === null && (
-          <div className="flex gap-1">
-            {[{label:'+ Topic',mode:'theme',title:'New topic'},{label:'+ Note',mode:'note',title:'New note'}].map(btn=>(
-              <button key={btn.mode}
-                onClick={() => { setCreateMode(btn.mode); if(btn.mode==='note' && !activeFile) setSelectedTheme(topicNames[0]||'') }}
-                title={btn.title}
-                className="flex-1 text-xs px-1.5 py-1.5 rounded-md transition-all duration-150 text-center"
-                style={{ color:'var(--text-muted)', border:'1px solid var(--glass-border)' }}
-                onMouseEnter={e => { e.currentTarget.style.background='var(--glass-bg-strong)'; e.currentTarget.style.color='var(--text-primary)' }}
-                onMouseLeave={e => { e.currentTarget.style.background='transparent'; e.currentTarget.style.color='var(--text-muted)' }}
-              >{btn.label}</button>
-            ))}
-            <button onClick={handleCreateJournal} title="Open or create today's journal"
-              className="flex-1 flex items-center justify-center gap-1 text-xs px-1.5 py-1.5 rounded-md transition-all duration-150"
-              style={{ color:'var(--text-muted)', border:'1px solid var(--glass-border)' }}
-              onMouseEnter={e => { e.currentTarget.style.background='var(--glass-bg-strong)'; e.currentTarget.style.color='var(--accent-text)' }}
-              onMouseLeave={e => { e.currentTarget.style.background='transparent'; e.currentTarget.style.color='var(--text-muted)' }}
-            ><IcCalendar/>Today</button>
-          </div>
-        )}
-        {createMode === 'theme' && (
-          <form onSubmit={handleCreateTheme} className="flex flex-col gap-1.5">
-            <span className="text-[10px] uppercase tracking-widest font-semibold" style={{ color:'var(--text-muted)' }}>New Topic</span>
-            <div className="flex gap-1">
-              <input autoFocus type="text" placeholder="Topic name..."
-                value={newThemeName} onChange={e=>setNewThemeName(e.target.value)}
-                onKeyDown={e=>e.key==='Escape'&&cancelCreate()}
-                className="flex-1 text-sm px-2 py-1 rounded-md focus:outline-none"
-                style={{ background:'var(--input-bg)', border:'1px solid var(--accent-light)', color:'var(--text-primary)' }}
-              />
-              <button type="submit" className="px-2 py-1 text-white text-sm rounded-md" style={{ background:'var(--accent-gradient)' }}>✓</button>
-              <button type="button" onClick={cancelCreate} className="px-2 py-1 text-sm rounded-md" style={{ background:'var(--glass-bg-strong)', color:'var(--text-muted)' }}>✕</button>
-            </div>
-          </form>
-        )}
-        {createMode === 'note' && (
-          <form onSubmit={handleCreateNote} className="flex flex-col gap-1.5">
-            <span className="text-[10px] uppercase tracking-widest font-semibold" style={{ color:'var(--text-muted)' }}>
-              New Note{noteContext ? <span style={{ color:'var(--accent-text)', fontWeight:400, textTransform:'none' }}> inside <em>{noteContext}</em></span> : ''}
-            </span>
-            {/* If no active file context, show topic dropdown */}
-            {!(activeFile && activeFile.folder !== '' && activeFile.folder !== 'Journal') && (
-              topicNames.length > 0 ? (
-                <select value={selectedTheme} onChange={e=>setSelectedTheme(e.target.value)}
-                  className="w-full text-xs px-2 py-1 rounded-md focus:outline-none"
-                  style={{ background:'var(--input-bg)', border:'1px solid var(--glass-border)', color:'var(--text-primary)' }}
-                >
-                  {topicNames.map(t=><option key={t} value={t} style={{ background:'var(--option-bg)' }}>{t}</option>)}
-                </select>
-              ) : <span className="text-xs" style={{ color:'var(--text-muted)' }}>Create a Topic first</span>
-            )}
-            <div className="flex gap-1">
-              <input autoFocus type="text" placeholder="Note name..."
-                value={newNoteName} onChange={e=>setNewNoteName(e.target.value)}
-                onKeyDown={e=>e.key==='Escape'&&cancelCreate()}
-                disabled={!noteContext}
-                className="flex-1 text-sm px-2 py-1 rounded-md focus:outline-none"
-                style={{ background:'var(--input-bg)', border:'1px solid var(--accent-light)', color:'var(--text-primary)' }}
-              />
-              <button type="submit" disabled={!noteContext} className="px-2 py-1 text-white text-sm rounded-md" style={{ background:'var(--accent-gradient)' }}>✓</button>
-              <button type="button" onClick={cancelCreate} className="px-2 py-1 text-sm rounded-md" style={{ background:'var(--glass-bg-strong)', color:'var(--text-muted)' }}>✕</button>
-            </div>
-          </form>
-        )}
-      </div>
-
       {/* File list */}
       <div className="flex-1 overflow-y-auto py-1">
         {files.length === 0 ? (
@@ -674,6 +628,74 @@ export default function Sidebar({
                 onContextMenu={handleContextMenu}
               />
             )}
+
+            {/* Create bar */}
+            <div className="px-2 py-2 flex flex-col gap-1.5" style={{ borderBottom: '1px solid var(--glass-border)' }}>
+              {createMode === null && (
+                <div className="flex gap-1">
+                  {[{label:'+ Topic',mode:'theme',title:'New topic'},{label:'+ Note',mode:'note',title:'New note'}].map(btn=>(
+                    <button key={btn.mode}
+                      onClick={() => { setCreateMode(btn.mode); if(btn.mode==='note' && !activeFile) setSelectedTheme(topicNames[0]||'') }}
+                      title={btn.title}
+                      className="flex-1 text-xs px-1.5 py-1.5 rounded-md transition-all duration-150 text-center"
+                      style={{ color:'var(--text-muted)', border:'1px solid var(--glass-border)' }}
+                      onMouseEnter={e => { e.currentTarget.style.background='var(--glass-bg-strong)'; e.currentTarget.style.color='var(--text-primary)' }}
+                      onMouseLeave={e => { e.currentTarget.style.background='transparent'; e.currentTarget.style.color='var(--text-muted)' }}
+                    >{btn.label}</button>
+                  ))}
+                  <button onClick={handleCreateJournal} title="Open or create today's journal"
+                    className="flex-1 flex items-center justify-center gap-1 text-xs px-1.5 py-1.5 rounded-md transition-all duration-150"
+                    style={{ color:'var(--text-muted)', border:'1px solid var(--glass-border)' }}
+                    onMouseEnter={e => { e.currentTarget.style.background='var(--glass-bg-strong)'; e.currentTarget.style.color='var(--accent-text)' }}
+                    onMouseLeave={e => { e.currentTarget.style.background='transparent'; e.currentTarget.style.color='var(--text-muted)' }}
+                  ><IcCalendar/>Today</button>
+                </div>
+              )}
+              {createMode === 'theme' && (
+                <form onSubmit={handleCreateTheme} className="flex flex-col gap-1.5">
+                  <span className="text-[10px] uppercase tracking-widest font-semibold" style={{ color:'var(--text-muted)' }}>New Topic</span>
+                  <div className="flex gap-1">
+                    <input autoFocus type="text" placeholder="Topic name..."
+                      value={newThemeName} onChange={e=>setNewThemeName(e.target.value)}
+                      onKeyDown={e=>e.key==='Escape'&&cancelCreate()}
+                      className="flex-1 text-sm px-2 py-1 rounded-md focus:outline-none"
+                      style={{ background:'var(--input-bg)', border:'1px solid var(--accent-light)', color:'var(--text-primary)' }}
+                    />
+                    <button type="submit" className="px-2 py-1 text-white text-sm rounded-md" style={{ background:'var(--accent-gradient)' }}>✓</button>
+                    <button type="button" onClick={cancelCreate} className="px-2 py-1 text-sm rounded-md" style={{ background:'var(--glass-bg-strong)', color:'var(--text-muted)' }}>✕</button>
+                  </div>
+                </form>
+              )}
+              {createMode === 'note' && (
+                <form onSubmit={handleCreateNote} className="flex flex-col gap-1.5">
+                  <span className="text-[10px] uppercase tracking-widest font-semibold" style={{ color:'var(--text-muted)' }}>
+                    New Note{noteContext ? <span style={{ color:'var(--accent-text)', fontWeight:400, textTransform:'none' }}> inside <em>{noteContext}</em></span> : ''}
+                  </span>
+                  {/* If no active file context, show topic dropdown */}
+                  {!(activeFile && activeFile.folder !== '' && activeFile.folder !== 'Journal') && (
+                    topicNames.length > 0 ? (
+                      <select value={selectedTheme} onChange={e=>setSelectedTheme(e.target.value)}
+                        className="w-full text-xs px-2 py-1 rounded-md focus:outline-none"
+                        style={{ background:'var(--input-bg)', border:'1px solid var(--glass-border)', color:'var(--text-primary)' }}
+                      >
+                        {topicNames.map(t=><option key={t} value={t} style={{ background:'var(--option-bg)' }}>{t}</option>)}
+                      </select>
+                    ) : <span className="text-xs" style={{ color:'var(--text-muted)' }}>Create a Topic first</span>
+                  )}
+                  <div className="flex gap-1">
+                    <input autoFocus type="text" placeholder="Note name..."
+                      value={newNoteName} onChange={e=>setNewNoteName(e.target.value)}
+                      onKeyDown={e=>e.key==='Escape'&&cancelCreate()}
+                      disabled={!noteContext}
+                      className="flex-1 text-sm px-2 py-1 rounded-md focus:outline-none"
+                      style={{ background:'var(--input-bg)', border:'1px solid var(--accent-light)', color:'var(--text-primary)' }}
+                    />
+                    <button type="submit" disabled={!noteContext} className="px-2 py-1 text-white text-sm rounded-md" style={{ background:'var(--accent-gradient)' }}>✓</button>
+                    <button type="button" onClick={cancelCreate} className="px-2 py-1 text-sm rounded-md" style={{ background:'var(--glass-bg-strong)', color:'var(--text-muted)' }}>✕</button>
+                  </div>
+                </form>
+              )}
+            </div>
 
             {/* Notes section header */}
             {visibleNodes.length > 0 && (
@@ -747,6 +769,70 @@ export default function Sidebar({
         )}
       </div>
 
+      {/* Archive section */}
+      {(() => {
+        const archiveFiles = files.filter(f => f.folder && f.folder.split('/')[0] === 'Archive')
+        if (!archiveFiles.length) return null
+        // Group by top-level archived folder name (strip 'Archive/' prefix)
+        const archivedTopics = [...new Set(
+          archiveFiles.map(f => f.folder.slice('Archive/'.length).split('/')[0])
+        )].filter(Boolean)
+        if (!archivedTopics.length) return null
+        return (
+          <div style={{ borderTop: '1px solid var(--glass-border)', flexShrink: 0 }}>
+            <button
+              onClick={() => setArchiveOpen(o => !o)}
+              className="w-full flex items-center gap-2 px-3 pt-2 pb-1 text-left"
+              style={{ background: 'none', border: 'none', cursor: 'pointer' }}
+            >
+              <span className="text-[10px] uppercase tracking-widest font-semibold" style={{ color: 'var(--text-dim)' }}>
+                {archiveOpen ? '▾' : '▸'} Archived ({archivedTopics.length})
+              </span>
+            </button>
+            {archiveOpen && archivedTopics.map(topicName => {
+              const topicFiles = archiveFiles.filter(f => f.folder.slice('Archive/'.length).split('/')[0] === topicName)
+              const rootFile = topicFiles.find(f => f.name === topicName)
+              return (
+                <div key={topicName} className="mx-1 mb-px">
+                  <div
+                    className="flex items-center gap-2 px-2 py-1 rounded-md cursor-pointer transition-all duration-150"
+                    style={{ color: 'var(--text-dim)', opacity: 0.65 }}
+                    onContextMenu={e => {
+                      e.preventDefault(); e.stopPropagation()
+                      if (onUnarchiveTopic) {
+                        // inline unarchive via confirm
+                        window.electronAPI.confirmDialog(`Restore "${topicName}"?`, `This will move "${topicName}" back to your vault.`)
+                          .then(ok => { if (ok) onUnarchiveTopic(`Archive/${topicName}`) })
+                      }
+                    }}
+                    onClick={() => rootFile && onOpenFile(rootFile)}
+                    onMouseEnter={e => { e.currentTarget.style.opacity = '1' }}
+                    onMouseLeave={e => { e.currentTarget.style.opacity = '0.65' }}
+                    title={onUnarchiveTopic ? 'Right-click to restore' : topicName}
+                  >
+                    <span className="text-xs opacity-50">⊘</span>
+                    <span className="text-xs truncate flex-1">{topicName}</span>
+                    {onUnarchiveTopic && (
+                      <button
+                        onClick={async e => {
+                          e.stopPropagation()
+                          const ok = await window.electronAPI.confirmDialog(`Restore "${topicName}"?`, `This will move "${topicName}" back to your vault.`)
+                          if (ok) onUnarchiveTopic(`Archive/${topicName}`)
+                        }}
+                        className="text-[9px] px-1.5 py-0.5 rounded transition-all duration-150 flex-shrink-0"
+                        style={{ color: 'var(--accent-text)', background: 'var(--accent-light)', border: '1px solid var(--glass-border)' }}
+                        title="Restore to vault"
+                      >↩ restore</button>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+            <div style={{ height: 4 }} />
+          </div>
+        )
+      })()}
+
       {/* Recent Files */}
       {recentFiles.length > 0 && (
         <div style={{ borderTop: '1px solid var(--glass-border)', flexShrink: 0 }}>
@@ -787,8 +873,8 @@ export default function Sidebar({
         </span>
         <div className="flex items-center gap-1">
           {[
-            {ic:<IcFile/>,        act:showNotes,       fn:onShowNotes,        t:'Notes view'},
             {ic:<IcGraph/>,       act:showGraph,       fn:onToggleGraph,      t:'Graph view'},
+            {ic:<IcFile/>,        act:showNotes,       fn:onShowNotes,        t:'Notes view'},
             {ic:<IcKanban/>,      act:showKanban,      fn:onToggleKanban,     t:'Kanban board'},
             {ic:<IcWhiteboard/>,  act:showWhiteboard,  fn:onToggleWhiteboard, t:'Whiteboard'},
             {ic:<IcAI/>,          act:showAI,          fn:onToggleAI,         t:'AI Harness'},
@@ -821,9 +907,23 @@ export default function Sidebar({
               Rename
             </button>
           )}
-          {contextMenu.file && (
+          {(contextMenu.folder || contextMenu.file?.folder) && onArchiveTopic && (
+            <button onClick={handleArchive} className="w-full text-left px-3 py-1.5 text-sm transition-colors"
+              style={{ color: 'var(--text-muted)' }}
+              onMouseEnter={e => e.currentTarget.style.background = 'var(--glass-bg-strong)'}
+              onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+            >
+              Archive{contextMenu.folder ? ' Topic' : ''}
+            </button>
+          )}
+          {contextMenu.folder && (
             <button onClick={handleDelete} className="w-full text-left px-3 py-1.5 text-sm text-red-400 hover:text-red-300 hover:bg-red-500/10 transition-colors">
-              {contextMenu.folder ? 'Delete Topic' : 'Delete note'}
+              Delete Topic
+            </button>
+          )}
+          {!contextMenu.folder && contextMenu.file && (
+            <button onClick={handleDelete} className="w-full text-left px-3 py-1.5 text-sm text-red-400 hover:text-red-300 hover:bg-red-500/10 transition-colors">
+              Delete note
             </button>
           )}
           <button onClick={() => setContextMenu(null)} className="w-full text-left px-3 py-1.5 text-sm transition-colors"
