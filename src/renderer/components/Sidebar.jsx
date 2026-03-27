@@ -442,7 +442,7 @@ export default function Sidebar({
   const [renamingFolder, setRenamingFolder] = useState(null)
 
   const handleContextMenu = useCallback((e, file, folder = null, folderName = null) => {
-    e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY, file, folder, folderName })
+    e.preventDefault(); e.stopPropagation(); setContextMenu({ x: e.clientX, y: e.clientY, file, folder, folderName })
   }, [])
   const handleDelete = useCallback(async () => {
     if (!contextMenu) return; await onDeleteFile(contextMenu.file); setContextMenu(null)
@@ -823,7 +823,7 @@ export default function Sidebar({
           )}
           {contextMenu.file && (
             <button onClick={handleDelete} className="w-full text-left px-3 py-1.5 text-sm text-red-400 hover:text-red-300 hover:bg-red-500/10 transition-colors">
-              Delete note
+              {contextMenu.folder ? 'Delete Topic' : 'Delete note'}
             </button>
           )}
           <button onClick={() => setContextMenu(null)} className="w-full text-left px-3 py-1.5 text-sm transition-colors"
