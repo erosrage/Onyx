@@ -28,6 +28,17 @@ const CUSTOM_THEMES = [
 const CUSTOM_THEME_IDS = new Set(CUSTOM_THEMES.map(t => t.id))
 const SYSTEM_FOLDERS = new Set(['Journal', 'Tags', 'assets', 'whiteboards', 'Archive'])
 
+const SPACE_COLORS = [
+  '#f472b6', '#c084fc', '#60a5fa', '#34d399', '#fbbf24',
+  '#f87171', '#a78bfa', '#38bdf8', '#4ade80', '#fb923c',
+  '#e879f9', '#22d3ee', '#86efac', '#facc15', '#ff6b9d',
+]
+function spaceColor(name) {
+  let h = 0
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) & 0xffff
+  return SPACE_COLORS[h % SPACE_COLORS.length]
+}
+
 // ── Build recursive tree from flat file list ──────────────────────────────────
 // `allFolders` = the complete folder list from vault:read (includes empty dirs)
 function buildFolderTree(folder, files, allFolders = []) {
@@ -284,7 +295,6 @@ export default function Sidebar({
   onChangeVault, onRefresh, showGraph, onToggleGraph, showAI, onToggleAI,
   showWhiteboard, onToggleWhiteboard, showKanban, onToggleKanban, showNotes, onShowNotes, theme, onSetTheme, onMoveFile,
   onArchiveTopic, onUnarchiveTopic,
-  vaults = [], activeVaultId, onSwitchVault, onAddVault, onRemoveVault,
 }) {
   const [createMode, setCreateMode] = useState(null)
   const [newThemeName, setNewThemeName] = useState('')
@@ -305,8 +315,6 @@ export default function Sidebar({
   const [recentFiles, setRecentFiles] = useState(() => {
     try { return JSON.parse(localStorage.getItem('onyx-recent-files') || '[]') } catch { return [] }
   })
-  const [showVaultList, setShowVaultList] = useState(false)
-
   // Track recently opened files
   useEffect(() => {
     if (!activeFile) return
@@ -319,7 +327,7 @@ export default function Sidebar({
     })
   }, [activeFile])
 
-  const vaultName = vaultPath ? vaultPath.split(/[\\/]/).pop() : 'Vault'
+  const vaultName = vaultPath ? vaultPath.split(/[\\/]/).pop() : 'Space'
 
   const isJournalFile = (f) => f.folder === 'Journal' || f.folder.startsWith('Journal/')
   const journalFiles = useMemo(() => files.filter(isJournalFile), [files])
@@ -531,7 +539,25 @@ export default function Sidebar({
       {/* Vault header */}
       <div className="flex items-center justify-between px-3 py-2.5" style={{ borderBottom: '1px solid var(--glass-border)' }}>
         <div className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
-          <span style={{ color: 'var(--accent)', display: 'flex', flexShrink: 0 }}><IcFolder/></span>
+          {/* Current-space star dot — click to open galaxy view */}
+          <button
+            onClick={onChangeVault}
+            title="Galaxy view — switch space"
+            style={{
+              flexShrink:0, width:14, height:14, borderRadius:'50%', border:'none', padding:0, cursor:'pointer',
+              background:`radial-gradient(circle at 32% 32%, ${spaceColor(vaultName)} 0%, ${spaceColor(vaultName)}88 55%, ${spaceColor(vaultName)}22 100%)`,
+              boxShadow:`0 0 5px ${spaceColor(vaultName)}99, 0 0 10px ${spaceColor(vaultName)}44`,
+              transition:'transform 0.2s ease, box-shadow 0.2s ease',
+            }}
+            onMouseEnter={e => {
+              e.currentTarget.style.transform='scale(1.45)'
+              e.currentTarget.style.boxShadow=`0 0 9px ${spaceColor(vaultName)}, 0 0 18px ${spaceColor(vaultName)}66`
+            }}
+            onMouseLeave={e => {
+              e.currentTarget.style.transform='scale(1)'
+              e.currentTarget.style.boxShadow=`0 0 5px ${spaceColor(vaultName)}99, 0 0 10px ${spaceColor(vaultName)}44`
+            }}
+          />
           <span className="text-sm font-semibold truncate tracking-tight" style={{ color: 'var(--text-primary)' }} title={vaultPath}>
             {vaultName}
           </span>
@@ -598,7 +624,7 @@ export default function Sidebar({
               <IcRefresh/>
             </span>
           </button>
-          <button onClick={onChangeVault} title="Change vault"
+          <button onClick={onChangeVault} title="Switch Space"
             className="flex items-center justify-center w-6 h-6 rounded-md transition-all duration-150"
             style={{ color: 'var(--text-muted)', border: '1px solid transparent' }}
             onMouseEnter={e => { e.currentTarget.style.color='var(--text-primary)'; e.currentTarget.style.background='var(--glass-bg-strong)' }}
@@ -606,64 +632,6 @@ export default function Sidebar({
           ><IcSwap/></button>
         </div>
       </div>
-
-      {/* Vault switcher — shown when multiple vaults exist or user opens the list */}
-      {(vaults.length > 1 || showVaultList) && (
-        <div style={{ borderBottom: '1px solid var(--glass-border)', padding: '4px 6px 6px' }}>
-          <div className="flex items-center justify-between px-1 pb-1">
-            <span className="text-[10px] uppercase tracking-widest font-semibold" style={{ color: 'var(--text-dim)' }}>Vaults</span>
-            <button
-              onClick={() => { if (onAddVault) onAddVault() }}
-              className="text-[10px] px-1.5 py-0.5 rounded transition-all"
-              style={{ color: 'var(--text-muted)', background: 'transparent', border: 'none' }}
-              onMouseEnter={e => { e.currentTarget.style.color = 'var(--accent-text)' }}
-              onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-muted)' }}
-              title="Add vault"
-            >+ Add</button>
-          </div>
-          {vaults.map(vault => {
-            const isActive = vault.id === activeVaultId
-            return (
-              <div key={vault.id} className="flex items-center gap-1 rounded-md px-1.5 py-1 my-px group transition-all"
-                style={{
-                  background: isActive ? 'var(--accent-light)' : 'transparent',
-                  border: isActive ? '1px solid var(--accent-glow)' : '1px solid transparent',
-                  cursor: isActive ? 'default' : 'pointer',
-                }}
-                onClick={() => !isActive && onSwitchVault && onSwitchVault(vault.id)}
-                onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = 'var(--glass-bg-strong)' }}
-                onMouseLeave={e => { if (!isActive) e.currentTarget.style.background = 'transparent' }}
-              >
-                <span style={{ color: isActive ? 'var(--accent)' : 'var(--text-dim)', display:'flex', flexShrink:0 }}><IcFolder/></span>
-                <span className="flex-1 truncate text-xs" style={{ color: isActive ? 'var(--text-primary)' : 'var(--text-muted)' }}>
-                  {vault.name}
-                </span>
-                {isActive && <span style={{ color: 'var(--accent)', fontSize: '0.55rem' }}>●</span>}
-                {!isActive && onRemoveVault && (
-                  <button
-                    onClick={e => { e.stopPropagation(); onRemoveVault(vault.id) }}
-                    className="opacity-0 group-hover:opacity-100 text-[10px] px-1 transition-opacity"
-                    style={{ color: 'var(--text-dim)', background: 'none', border: 'none' }}
-                    title="Remove vault from workspace"
-                  >✕</button>
-                )}
-              </div>
-            )
-          })}
-        </div>
-      )}
-      {vaults.length <= 1 && (
-        <div className="px-3 py-1 flex justify-end">
-          <button
-            onClick={() => { setShowVaultList(v => !v) }}
-            className="text-[9px] transition-all"
-            style={{ color: 'var(--text-dim)', background: 'none', border: 'none' }}
-            onMouseEnter={e => { e.currentTarget.style.color = 'var(--text-muted)' }}
-            onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-dim)' }}
-            title="Manage vaults"
-          >{showVaultList ? 'hide vaults' : '+ add vault'}</button>
-        </div>
-      )}
 
       {/* Search */}
       <div className="px-2 py-2" style={{ borderBottom: '1px solid var(--glass-border)' }}>
@@ -680,7 +648,7 @@ export default function Sidebar({
       <div className="flex-1 overflow-y-auto py-1">
         {files.length === 0 ? (
           <div className="px-4 py-8 text-center">
-            <p className="text-sm" style={{ color:'var(--text-dim)' }}>No notes yet — create a folder to get started</p>
+            <p className="text-sm" style={{ color:'var(--text-dim)' }}>No notes yet — create a topic to get started</p>
           </div>
         ) : (
           <>
@@ -696,7 +664,7 @@ export default function Sidebar({
             <div className="px-2 py-2 flex flex-col gap-1.5" style={{ borderBottom: '1px solid var(--glass-border)' }}>
               {createMode === null && (
                 <div className="flex gap-1">
-                  {[{label:'+ Folder',mode:'theme',title:'New folder'},{label:'+ Note',mode:'note',title:'New note'}].map(btn=>(
+                  {[{label:'+ Topic',mode:'theme',title:'New topic'},{label:'+ Note',mode:'note',title:'New note'}].map(btn=>(
                     <button key={btn.mode}
                       onClick={() => { setCreateMode(btn.mode); if(btn.mode==='note' && !activeFile) setSelectedTheme(topicNames[0]||'') }}
                       title={btn.title}
@@ -716,9 +684,9 @@ export default function Sidebar({
               )}
               {createMode === 'theme' && (
                 <form onSubmit={handleCreateTheme} className="flex flex-col gap-1.5">
-                  <span className="text-[10px] uppercase tracking-widest font-semibold" style={{ color:'var(--text-muted)' }}>New Folder</span>
+                  <span className="text-[10px] uppercase tracking-widest font-semibold" style={{ color:'var(--text-muted)' }}>New Topic</span>
                   <div className="flex gap-1">
-                    <input autoFocus type="text" placeholder="Folder name..."
+                    <input autoFocus type="text" placeholder="Topic name..."
                       value={newThemeName} onChange={e=>setNewThemeName(e.target.value)}
                       onKeyDown={e=>e.key==='Escape'&&cancelCreate()}
                       className="flex-1 text-sm px-2 py-1 rounded-md focus:outline-none"
@@ -743,7 +711,7 @@ export default function Sidebar({
                       >
                         {topicNames.map(t=><option key={t} value={t} style={{ background:'var(--option-bg)' }}>{t}</option>)}
                       </select>
-                    ) : <span className="text-xs" style={{ color:'var(--text-muted)' }}>Create a Folder first</span>
+                    ) : <span className="text-xs" style={{ color:'var(--text-muted)' }}>Create a Topic first</span>
                   )}
                   <div className="flex gap-1">
                     <input autoFocus type="text" placeholder="Note name..."
@@ -771,9 +739,9 @@ export default function Sidebar({
                   onMouseEnter={e => e.currentTarget.style.color = '#c4b5fd'}
                   onMouseLeave={e => e.currentTarget.style.color = 'var(--accent-text)'}
                 >
-                  Folders
+                  Topics
                 </button>
-                <span className="text-[9px] opacity-40" style={{ color:'var(--text-dim)' }}>drag to reorder · drag notes to folders</span>
+                <span className="text-[9px] opacity-40" style={{ color:'var(--text-dim)' }}>drag to reorder · drag notes to topics</span>
               </div>
             )}
 
@@ -864,7 +832,7 @@ export default function Sidebar({
                       e.preventDefault(); e.stopPropagation()
                       if (onUnarchiveTopic) {
                         // inline unarchive via confirm
-                        window.electronAPI.confirmDialog(`Restore "${topicName}"?`, `This will move "${topicName}" back to your vault.`)
+                        window.electronAPI.confirmDialog(`Restore "${topicName}"?`, `This will move "${topicName}" back to your space.`)
                           .then(ok => { if (ok) onUnarchiveTopic(`Archive/${topicName}`) })
                       }
                     }}
@@ -879,12 +847,12 @@ export default function Sidebar({
                       <button
                         onClick={async e => {
                           e.stopPropagation()
-                          const ok = await window.electronAPI.confirmDialog(`Restore "${topicName}"?`, `This will move "${topicName}" back to your vault.`)
+                          const ok = await window.electronAPI.confirmDialog(`Restore "${topicName}"?`, `This will move "${topicName}" back to your space.`)
                           if (ok) onUnarchiveTopic(`Archive/${topicName}`)
                         }}
                         className="text-[9px] px-1.5 py-0.5 rounded transition-all duration-150 flex-shrink-0"
                         style={{ color: 'var(--accent-text)', background: 'var(--accent-light)', border: '1px solid var(--glass-border)' }}
-                        title="Restore to vault"
+                        title="Restore to space"
                       >↩ restore</button>
                     )}
                   </div>

@@ -29,6 +29,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Workspace / multi-vault management
   readWorkspaces: () => ipcRenderer.invoke('workspaces:read'),
   saveWorkspaces: (data) => ipcRenderer.invoke('workspaces:save', data),
+
+  // Space Group management
+  listSpaces: (groupPath) => ipcRenderer.invoke('spaceGroup:listSpaces', groupPath),
+  createSpace: (groupPath, name) => ipcRenderer.invoke('spaceGroup:createSpace', groupPath, name),
 })
 
 contextBridge.exposeInMainWorld('terminalAPI', {

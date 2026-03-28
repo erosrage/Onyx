@@ -3,6 +3,7 @@ import VaultPicker from './components/VaultPicker'
 import Sidebar from './components/Sidebar'
 import Editor from './components/Editor'
 import GraphView from './components/GraphView'
+import GalaxyView from './components/GalaxyView'
 import AIHarness from './components/AIHarness'
 import Whiteboard from './components/Whiteboard'
 import KanbanBoard from './components/KanbanBoard'
@@ -16,9 +17,8 @@ export default function App() {
   const [activeFile, setActiveFile] = useState(null)
   const [sidebarWidth, setSidebarWidth] = useState(260)
   const [isResizing, setIsResizing] = useState(false)
-  // Multi-vault workspace state
-  const [vaults, setVaults] = useState([])
-  const [activeVaultId, setActiveVaultId] = useState(null)
+  // Space Groups (parent folders containing Spaces)
+  const [spaceGroups, setSpaceGroups] = useState([])
   const [showGraph, setShowGraph] = useState(true)
   const [showAI, setShowAI] = useState(false)
   const [showWhiteboard, setShowWhiteboard] = useState(false)
@@ -40,18 +40,11 @@ export default function App() {
     setTheme(id)
   }, [])
 
-  // Load workspaces config on startup; restores previous vault sessions
+  // Load saved Space Groups on startup. vaultPath is NOT auto-loaded — user picks each session.
   useEffect(() => {
     window.electronAPI.readWorkspaces().then(ws => {
-      if (ws.vaults && ws.vaults.length > 0) {
-        setVaults(ws.vaults)
-        const vid = ws.activeVaultId || ws.vaults[0].id
-        setActiveVaultId(vid)
-        const vault = ws.vaults.find(v => v.id === vid)
-        if (vault && !sessionStorage.getItem('vaultPath')) {
-          sessionStorage.setItem('vaultPath', vault.rootPath)
-          setVaultPath(vault.rootPath)
-        }
+      if (ws.spaceGroups && ws.spaceGroups.length > 0) {
+        setSpaceGroups(ws.spaceGroups)
       }
     }).catch(() => {})
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
@@ -80,57 +73,79 @@ export default function App() {
     return cleanup
   }, [vaultPath, loadVault])
 
-  const saveWorkspaces = useCallback(async (updatedVaults, newActiveId) => {
-    await window.electronAPI.saveWorkspaces({
-      workspaces: [{ id: 'default', name: 'Default' }],
-      vaults: updatedVaults,
-      activeVaultId: newActiveId,
-    })
+  const saveSpaceGroups = useCallback(async (groups) => {
+    await window.electronAPI.saveWorkspaces({ spaceGroups: groups })
   }, [])
 
-  const handleSelectVault = async () => {
+  // Add a new Space Group via OS folder picker
+  const handleAddSpaceGroup = useCallback(async () => {
     const selectedPath = await window.electronAPI.selectVault()
     if (!selectedPath) return
-    const vaultName = selectedPath.split(/[\\/]/).pop()
-    const existing = vaults.find(v => v.rootPath === selectedPath)
-    const vault = existing || { id: `vault-${Date.now()}`, workspaceId: 'default', name: vaultName, rootPath: selectedPath }
-    const updatedVaults = existing ? vaults : [...vaults, vault]
-    setVaults(updatedVaults)
-    setActiveVaultId(vault.id)
-    sessionStorage.setItem('vaultPath', selectedPath)
-    setVaultPath(selectedPath)
-    setActiveFile(null)
-    await saveWorkspaces(updatedVaults, vault.id)
-  }
+    const name = selectedPath.split(/[\\/]/).pop()
+    if (spaceGroups.find(g => g.path === selectedPath)) return
+    const group = { id: `group-${Date.now()}`, name, path: selectedPath }
+    const updated = [...spaceGroups, group]
+    setSpaceGroups(updated)
+    await saveSpaceGroups(updated)
+  }, [spaceGroups, saveSpaceGroups])
 
-  const handleSwitchVault = useCallback(async (vaultId) => {
-    const vault = vaults.find(v => v.id === vaultId)
-    if (!vault) return
-    setActiveVaultId(vaultId)
-    sessionStorage.setItem('vaultPath', vault.rootPath)
-    setVaultPath(vault.rootPath)
+  // Open a specific Space (subfolder) as the active vault
+  const handleSelectSpace = useCallback((spacePath) => {
+    sessionStorage.setItem('vaultPath', spacePath)
+    setVaultPath(spacePath)
     setActiveFile(null)
-    await saveWorkspaces(vaults, vaultId)
-  }, [vaults, saveWorkspaces])
+  }, [])
 
-  const handleRemoveVault = useCallback(async (vaultId) => {
-    const updatedVaults = vaults.filter(v => v.id !== vaultId)
-    const newActiveId = activeVaultId === vaultId ? (updatedVaults[0]?.id || null) : activeVaultId
-    setVaults(updatedVaults)
-    if (activeVaultId === vaultId) {
-      setActiveVaultId(newActiveId)
-      const next = updatedVaults[0]
-      if (next) {
-        setVaultPath(next.rootPath)
-        sessionStorage.setItem('vaultPath', next.rootPath)
-      } else {
-        setVaultPath(null)
-        sessionStorage.removeItem('vaultPath')
-      }
+  // Create a new Space folder then open it
+  const handleCreateSpace = useCallback(async (groupPath, name) => {
+    const result = await window.electronAPI.createSpace(groupPath, name)
+    if (result.success) {
+      sessionStorage.setItem('vaultPath', result.path)
+      setVaultPath(result.path)
       setActiveFile(null)
     }
-    await saveWorkspaces(updatedVaults, newActiveId)
-  }, [vaults, activeVaultId, saveWorkspaces])
+  }, [])
+
+  // Log out — return to VaultPicker
+  const handleLogout = useCallback(() => {
+    sessionStorage.removeItem('vaultPath')
+    setVaultPath(null)
+    setActiveFile(null)
+    setFiles([])
+    setFolders([])
+    setNodes([])
+    setShowGalaxy(false)
+  }, [])
+
+  // Galaxy view — overlay showing all spaces as stars
+  const [showGalaxy, setShowGalaxy] = useState(false)
+  const [graphRecenterToken, setGraphRecenterToken] = useState(0)
+  const [graphCenterOnStarToken, setGraphCenterOnStarToken] = useState(0)
+
+  // Always recenter graph view whenever it becomes visible, regardless of how it was triggered
+  useEffect(() => {
+    if (showGraph) setGraphRecenterToken(t => t + 1)
+  }, [showGraph])
+
+  const handleOpenGalaxy  = useCallback(() => setShowGalaxy(true), [])
+  const handleCloseGalaxy = useCallback(() => {
+    setShowGalaxy(false)
+    setShowGraph(true)
+    setShowAI(false)
+    setShowWhiteboard(false)
+    setShowKanban(false)
+    setGraphCenterOnStarToken(t => t + 1)
+  }, [])
+  const handleSelectFromGalaxy = useCallback((path) => {
+    setShowGalaxy(false)
+    setShowGraph(true)
+    setShowAI(false)
+    setShowWhiteboard(false)
+    setShowKanban(false)
+    setActiveFile(null)
+    setGraphCenterOnStarToken(t => t + 1)
+    handleSelectSpace(path)
+  }, [handleSelectSpace])
 
   const handleOpenFile = useCallback((file) => {
     setActiveFile(file)
@@ -278,16 +293,36 @@ export default function App() {
   return (
     <div
       data-theme={theme}
-      className="flex h-screen w-screen overflow-hidden"
+      className="h-screen w-screen overflow-hidden"
       style={{
         background: 'linear-gradient(135deg, var(--bg-primary), var(--bg-secondary), var(--bg-primary))',
         color: 'var(--text-primary)',
+        position: 'relative',
       }}
     >
       {!vaultPath ? (
-        <VaultPicker onSelectVault={handleSelectVault} theme={theme} onSetTheme={applyTheme} />
+        <VaultPicker
+          theme={theme}
+          onSetTheme={applyTheme}
+          spaceGroups={spaceGroups}
+          onAddSpaceGroup={handleAddSpaceGroup}
+          onSelectSpace={handleSelectSpace}
+          onCreateSpace={handleCreateSpace}
+        />
       ) : (
         <>
+          {/* Workspace content — zooms out when galaxy opens */}
+          <div
+            className="flex w-full h-full overflow-hidden"
+            style={{
+              transform:  showGalaxy ? 'scale(0.5)'  : 'scale(1)',
+              filter:     showGalaxy ? 'blur(10px)'  : 'none',
+              opacity:    showGalaxy ? 0             : 1,
+              transition: 'transform 0.45s cubic-bezier(0.4,0,1,1), filter 0.4s ease, opacity 0.35s ease',
+              transformOrigin: '50% 50%',
+              willChange: 'transform, filter, opacity',
+            }}
+          >
           {/* Sidebar */}
           <div className="flex-shrink-0 overflow-hidden" style={{ width: sidebarWidth }}>
             <Sidebar
@@ -299,7 +334,7 @@ export default function App() {
               onCreateFile={handleCreateFile}
               onDeleteFile={handleDeleteFile}
               onDeleteTopic={handleDeleteTopic}
-              onChangeVault={handleSelectVault}
+              onChangeVault={handleOpenGalaxy}
               onRefresh={loadVault}
               showGraph={showGraph}
               onToggleGraph={() => { setShowGraph(g => !g); setShowAI(false); setShowWhiteboard(false) }}
@@ -316,11 +351,6 @@ export default function App() {
               onMoveFile={handleMoveFile}
               onArchiveTopic={handleArchiveTopic}
               onUnarchiveTopic={handleUnarchiveTopic}
-              vaults={vaults}
-              activeVaultId={activeVaultId}
-              onSwitchVault={handleSwitchVault}
-              onAddVault={handleSelectVault}
-              onRemoveVault={handleRemoveVault}
             />
           </div>
 
@@ -361,6 +391,7 @@ export default function App() {
             {everOpened.graph && (
               <div className="absolute inset-0" style={{ display: showGraph ? 'block' : 'none' }}>
                 <GraphView files={files} activeFile={activeFile} onOpenFile={handleOpenFile} onCreateFile={handleCreateFile} theme={theme} onArchiveTopic={handleArchiveTopic}
+                  vaultPath={vaultPath} onSwitchSpace={handleOpenGalaxy} isVisible={showGraph} recenterToken={graphRecenterToken} centerOnStarToken={graphCenterOnStarToken}
                   onDeleteFiles={async (paths) => {
                     for (const p of paths) await window.electronAPI.deleteFile(p)
                     await loadVault()
@@ -392,6 +423,18 @@ export default function App() {
               </div>
             )}
           </div>
+          </div>{/* end workspace zoom wrapper */}
+
+          {/* Galaxy view overlay — sibling to workspace wrapper so it isn't affected by the zoom-out transform */}
+          {showGalaxy && (
+            <GalaxyView
+              spaceGroups={spaceGroups}
+              currentSpacePath={vaultPath}
+              onSelectSpace={handleSelectFromGalaxy}
+              onClose={handleCloseGalaxy}
+              onLogout={() => { handleLogout() }}
+            />
+          )}
         </>
       )}
     </div>

@@ -292,6 +292,50 @@ ipcMain.handle('workspaces:save', (_, data) => {
   }
 })
 
+// List immediate subfolders of a Space Group path (these are the Spaces)
+ipcMain.handle('spaceGroup:listSpaces', async (_, groupPath) => {
+  try {
+    const entries = await fsPromises.readdir(groupPath, { withFileTypes: true })
+    const spaces = entries
+      .filter(e => e.isDirectory() && !e.name.startsWith('.') && !e.name.startsWith('_'))
+      .map(e => ({ name: e.name, path: path.join(groupPath, e.name) }))
+      .sort((a, b) => a.name.localeCompare(b.name))
+    return { success: true, spaces }
+  } catch (err) {
+    return { success: false, error: err.message, spaces: [] }
+  }
+})
+
+// Create a new Space (subfolder) within a Space Group, with default Journal + Notes setup
+ipcMain.handle('spaceGroup:createSpace', async (_, groupPath, name) => {
+  try {
+    const spacePath = path.join(groupPath, name)
+    await fsPromises.mkdir(spacePath, { recursive: true })
+
+    // Default Journal
+    const journalDir = path.join(spacePath, 'Journal')
+    await fsPromises.mkdir(journalDir, { recursive: true })
+    await fsPromises.writeFile(
+      path.join(journalDir, 'Journal.md'),
+      `# Journal\n\nYour journal for ${name}. Create dated entries to track your thoughts and progress.\n`,
+      'utf8'
+    )
+
+    // Default starter topic
+    const notesDir = path.join(spacePath, 'Notes')
+    await fsPromises.mkdir(notesDir, { recursive: true })
+    await fsPromises.writeFile(
+      path.join(notesDir, 'Notes.md'),
+      `# Notes\n\nCapture and organize your notes for ${name}.\n`,
+      'utf8'
+    )
+
+    return { success: true, path: spacePath, name }
+  } catch (err) {
+    return { success: false, error: err.message }
+  }
+})
+
 // Show confirmation dialog
 ipcMain.handle('dialog:confirm', async (_, message, detail) => {
   const result = await dialog.showMessageBox(mainWindow, {

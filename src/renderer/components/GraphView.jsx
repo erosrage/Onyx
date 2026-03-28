@@ -1,6 +1,46 @@
 import React, { useEffect, useRef, useState } from 'react'
+import { spaceColor } from './GalaxyView'
 
 const GLASS_BORDER = '1px solid var(--glass-border)'
+
+// Wang hash — breaks LCG correlations, gives organic-looking scatter
+function wh(n) { n = (n ^ 61) ^ (n >>> 16); n *= 9; n ^= n >>> 4; n *= 0x27d4eb2d; n ^= n >>> 15; return (n >>> 0) }
+// Stars: clustered — 60% seeded around 6 loose cluster centres, 40% scattered freely
+const _CLUSTERS = [[22,30],[55,18],[78,65],[35,72],[68,42],[12,80]]
+const GV_STARS = Array.from({ length: 260 }, (_, i) => {
+  const hx = wh(i * 3 + 1), hy = wh(i * 3 + 2), hm = wh(i * 3 + 3)
+  let nx, ny
+  if (i < 156) { // clustered
+    const [cx, cy] = _CLUSTERS[i % _CLUSTERS.length]
+    nx = cx + ((hx % 40000) / 1000 - 20)   // ±20% spread around cluster
+    ny = cy + ((hy % 30000) / 1000 - 15)
+  } else {       // free scatter
+    nx = (hx % 98000) / 1000 + 1
+    ny = (hy % 96000) / 1000 + 2
+  }
+  return {
+    nx: Math.max(0.5, Math.min(99.5, nx)),
+    ny: Math.max(0.5, Math.min(99.5, ny)),
+    r:  0.3 + (hm % 24) / 14,
+    op: 0.06 + (wh(i * 7 + 5) % 420) / 2400,
+  }
+})
+
+// Nebula clouds — fixed normalised positions, drawn as radial gradients each frame
+const GV_NEBULAS = [
+  { nx: 22, ny: 32, rw: 0.28, rh: 0.18, rot: -0.18, rgba: '99,102,241',  op: 0.045 },
+  { nx: 68, ny: 62, rw: 0.22, rh: 0.16, rot:  0.25, rgba: '236,72,153',  op: 0.038 },
+  { nx: 48, ny: 20, rw: 0.20, rh: 0.13, rot:  0.10, rgba: '56,189,248',  op: 0.032 },
+  { nx: 78, ny: 78, rw: 0.18, rh: 0.14, rot: -0.30, rgba: '74,222,128',  op: 0.028 },
+  { nx: 14, ny: 70, rw: 0.16, rh: 0.12, rot:  0.05, rgba: '251,146,60',  op: 0.030 },
+  { nx: 55, ny: 50, rw: 0.25, rh: 0.15, rot:  0.40, rgba: '167,139,250', op: 0.035 },
+]
+
+// Convert a 6-digit hex color to { r, g, b }
+function hexToRgb(hex) {
+  const n = parseInt(hex.replace('#', ''), 16)
+  return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 }
+}
 
 // Deterministic hue per top-level folder — avoids purple (240-290) to reduce monotony
 const TOPIC_PALETTE = [200, 0, 160, 355, 32, 128, 16, 186, 52, 172, 310, 340]
@@ -38,9 +78,9 @@ function parseTags(text) {
 function getNodeLocation(node, files) {
   if (node.isTag)    return { crumb: 'Journal', label: `#${node.tagName}`, kind: 'tag' }
   if (node.isJournal) return { crumb: '', label: 'Journal', kind: 'journal' }
-  const file = files.find(f => f.name === node.id)
+  const file = node._path ? files.find(f => f.path === node._path) : null
   if (!file) return null
-  if (!file.folder) return { crumb: 'Vault root', label: file.name, kind: 'note' }
+  if (!file.folder) return { crumb: 'Space root', label: file.name, kind: 'note' }
   if (node.isTheme || file.folder === file.name)
     return { crumb: 'Topic', label: file.name, kind: 'topic' }
   const parts = file.folder.split('/')
@@ -52,97 +92,113 @@ async function buildGraph(allFiles) {
   const GRAPH_EXCLUDED = new Set(['Archive', 'assets', 'whiteboards'])
   const files = allFiles.filter(f => !GRAPH_EXCLUDED.has((f.folder || '').split('/')[0]))
   const results = await Promise.all(files.map(f => window.electronAPI.readFile(f.path)))
-  const nameSet = new Set(files.map(f => f.name.toLowerCase()))
   const linkMap = {}
   const tagFreq = {}
   const hasJournal = files.some(f => f.folder === 'Journal' && f.name === 'Journal')
 
-  // Count how many notes live inside each topic folder
-  const folderCount = {}
-  files.forEach(f => { if (f.folder) folderCount[f.folder] = (folderCount[f.folder] || 0) + 1 })
+  // Helper: unique node ID based on relative path (avoids duplicate-name collisions)
+  const fileId = (f) => f.relativePath.replace(/\.md$/, '').replace(/\\/g, '/')
+
+  // Count notes per top-level topic folder (used for topic node sizing)
+  const topicNoteCount = {}
+  files.forEach(f => {
+    if (!f.folder) return
+    const top = f.folder.split('/')[0]
+    topicNoteCount[top] = (topicNoteCount[top] || 0) + 1
+  })
+
+  // Build name→fileId map (first file wins for duplicate names)
+  const nameToId = {}
+  files.forEach(f => {
+    const key = f.name.toLowerCase()
+    if (!nameToId[key]) nameToId[key] = fileId(f)
+  })
 
   files.forEach((file, i) => {
     const text = results[i].success ? results[i].content : ''
-    linkMap[file.name] = parseWikilinks(text).filter(l => nameSet.has(l.toLowerCase()))
-
-    // Accumulate tags from journal files
+    const id = fileId(file)
+    linkMap[id] = parseWikilinks(text)
+      .map(raw => nameToId[raw.toLowerCase()])
+      .filter(Boolean)
     if (hasJournal && file.folder === 'Journal') {
       parseTags(text).forEach(tag => { tagFreq[tag] = (tagFreq[tag] || 0) + 1 })
     }
   })
 
+  // ── Phase 1: build ALL edges before creating any nodes ──────────────────────
+  // This ensures degree counts are accurate when nodes are sized and coloured.
+
   const degree = {}
-  files.forEach(f => { degree[f.name] = 0 })
+  files.forEach(f => { degree[fileId(f)] = 0 })
 
   const edges = []
-  for (const [src, targets] of Object.entries(linkMap)) {
-    for (const raw of targets) {
-      const tgt = files.find(f => f.name.toLowerCase() === raw.toLowerCase())?.name
-      if (tgt) {
-        edges.push({ source: src, target: tgt })
-        degree[src] = (degree[src] || 0) + 1
-        degree[tgt] = (degree[tgt] || 0) + 1
+
+  // 1a. Wiki-link edges
+  for (const [srcId, targets] of Object.entries(linkMap)) {
+    for (const tgtId of targets) {
+      if (!edges.some(e => e.source === srcId && e.target === tgtId)) {
+        edges.push({ source: srcId, target: tgtId })
+        degree[srcId]++
+        degree[tgtId] = (degree[tgtId] || 0) + 1
       }
     }
   }
 
-  // Add implicit edges from notes to their parent topic node (folder hierarchy).
-  // Build proper-topic-root set here (before virtual nodes exist) for this pass.
-  const topicRootNames = new Set(
-    files.filter(f => f.folder && f.folder === f.name).map(f => f.name.toLowerCase())
-  )
+  // 1b. Implicit parent-topic edges for every note that lives inside a folder.
+  //     Topic node ID = exact folder name (matching the root file name if one exists,
+  //     or the raw folder name for virtual topics — both cases use the same topFolder string).
+  //     We also record which topic names need a virtual node (no real file for that folder).
+  const properTopicRoots = new Map() // topFolder.toLowerCase() → fileId of root file
+  files.filter(f => f.folder && f.folder === f.name).forEach(f => {
+    properTopicRoots.set(f.folder.toLowerCase(), fileId(f))
+  })
+  const virtualTopics = new Map() // topFolder → note count
+
   files.forEach(file => {
     if (!file.folder) return
+    const id = fileId(file)
     const topFolder = file.folder.split('/')[0]
-    if (file.folder === file.name) return  // IS the topic root (folder root file)
-    if (!topicRootNames.has(topFolder.toLowerCase())) return
-    const alreadyLinked = edges.some(e =>
-      (e.source === file.name && e.target === topFolder) ||
-      (e.source === topFolder && e.target === file.name)
-    )
-    if (!alreadyLinked) {
-      edges.push({ source: file.name, target: topFolder, isImplicit: true })
-      degree[file.name] = (degree[file.name] || 0) + 1
-      degree[topFolder] = (degree[topFolder] || 0) + 1
+    if (file.folder === file.name) return  // this file IS the topic root — skip
+
+    const topicId = properTopicRoots.has(topFolder.toLowerCase())
+      ? properTopicRoots.get(topFolder.toLowerCase())
+      : topFolder
+
+    if (!edges.some(e => (e.source === id && e.target === topicId) || (e.source === topicId && e.target === id))) {
+      edges.push({ source: id, target: topicId, isImplicit: true })
+      degree[id] = (degree[id] || 0) + 1
+      degree[topicId] = (degree[topicId] || 0) + 1
+    }
+
+    if (!properTopicRoots.has(topFolder.toLowerCase())) {
+      virtualTopics.set(topFolder, (virtualTopics.get(topFolder) || 0) + 1)
     }
   })
+
+  // ── Phase 2: build nodes now that all degrees are final ──────────────────────
 
   const maxDeg = Math.max(...Object.values(degree), 1)
   const n = files.length
   const R = Math.min(120 + n * 10, 320)
   const step = (2 * Math.PI) / Math.max(n, 1)
+  const maxTopicNotes = Math.max(...Object.values(topicNoteCount), 1)
 
-  // Identify top-level folders that have notes but no root file (would leave orphan nodes).
-  // A "proper topic root" is a file where folder === name (e.g. Work/Work.md).
-  // Using only proper roots avoids false matches from identically-named files in other folders.
-  const properTopicRoots = new Set(
-    files.filter(f => f.folder && f.folder === f.name).map(f => f.name.toLowerCase())
-  )
-  const virtualFolderCounts = new Map()
-  files.forEach(file => {
-    if (!file.folder) return
-    const topFolder = file.folder.split('/')[0]
-    if (file.folder === file.name) return  // IS the topic root (folder root file)
-    if (!properTopicRoots.has(topFolder.toLowerCase())) {
-      virtualFolderCounts.set(topFolder, (virtualFolderCounts.get(topFolder) || 0) + 1)
-    }
-  })
-
-  const maxNotesFolderCount = Math.max(...files.map(f => folderCount[f.name] || 0), 1)
   const nodes = files.map((file, i) => {
-    const deg = degree[file.name] || 0
-    const isTheme = file.folder === '' || file.folder === file.name  // top-level or topic root
+    const id = fileId(file)
+    const deg = degree[id] || 0
+    const isTheme = file.folder === '' || file.folder === file.name
     const isJournal = file.folder === 'Journal' && file.name === 'Journal'
-    const noteCount = isTheme ? (folderCount[file.name] || 0) : 0
-    // Topics scale by note count; leaf notes scale by connection degree
+    const noteCount = isTheme ? (topicNoteCount[file.name] || 0) : 0
     const sizeMetric = isTheme ? Math.max(noteCount, deg) : deg
-    const maxMetric = isTheme ? Math.max(maxNotesFolderCount, maxDeg) : maxDeg
+    const maxMetric  = isTheme ? Math.max(maxTopicNotes, maxDeg) : maxDeg
     const size = isJournal
       ? 28
       : isTheme && sizeMetric > 0 ? 13 + 16 * (sizeMetric / maxMetric)
       : 6 + 8 * (deg / maxDeg)
     return {
-      id: file.name, label: file.name, degree: deg, isTheme, isJournal, noteCount,
+      id, label: file.name, _path: file.path,
+      _topicFolder: isTheme ? file.folder.split('/')[0] : null,
+      degree: deg, isTheme, isJournal, noteCount,
       size, folder: file.folder,
       x: R * Math.cos(i * step) + (Math.random() - 0.5) * 24,
       y: R * Math.sin(i * step) + (Math.random() - 0.5) * 24,
@@ -155,13 +211,14 @@ async function buildGraph(allFiles) {
   const nodeById = {}
   nodes.forEach(nd => { nodeById[nd.id] = nd })
 
-  // Create virtual topic nodes for folders that have no root file (avoids orphaned note nodes)
-  virtualFolderCounts.forEach((count, folderName) => {
+  // Create virtual topic nodes (folders with no root .md file)
+  virtualTopics.forEach((count, folderName) => {
+    const deg = degree[folderName] || 0
+    const size = 13 + 16 * (Math.min(count, maxTopicNotes) / maxTopicNotes)
     const vNode = {
-      id: folderName, label: folderName, degree: 0, isTheme: true, isJournal: false,
-      noteCount: count,
-      size: 13 + 16 * (Math.min(count, maxNotesFolderCount) / maxNotesFolderCount),
-      folder: folderName,
+      id: folderName, label: folderName, _path: null, _topicFolder: folderName,
+      degree: deg, isTheme: true, isJournal: false,
+      noteCount: count, size, folder: folderName,
       x: R * Math.cos(Math.random() * 2 * Math.PI),
       y: R * Math.sin(Math.random() * 2 * Math.PI),
       z: (Math.random() - 0.5) * 60,
@@ -170,21 +227,6 @@ async function buildGraph(allFiles) {
     }
     nodes.push(vNode)
     nodeById[folderName] = vNode
-    degree[folderName] = 0
-    files.forEach(file => {
-      if (!file.folder) return
-      if (file.folder.split('/')[0].toLowerCase() !== folderName.toLowerCase()) return
-      if (file.folder === file.name) return  // IS a topic root (can't be in a virtual folder, but guard for safety)
-      const alreadyLinked = edges.some(e =>
-        (e.source === file.name && e.target === folderName) ||
-        (e.source === folderName && e.target === file.name)
-      )
-      if (!alreadyLinked) {
-        edges.push({ source: file.name, target: folderName, isImplicit: true })
-        degree[file.name] = (degree[file.name] || 0) + 1
-        vNode.degree++
-      }
-    })
   })
 
   // Add top tag nodes orbiting Journal
@@ -192,7 +234,7 @@ async function buildGraph(allFiles) {
     const topTags = Object.entries(tagFreq)
       .sort(([, a], [, b]) => b - a)
       .slice(0, 10)
-    const jNode = nodeById['Journal']
+    const jNode = nodes.find(n => n.isJournal) || null
     const jx = jNode ? jNode.x : 0, jy = jNode ? jNode.y : 0
     topTags.forEach(([tag, freq], i) => {
       const angle = (i / topTags.length) * 2 * Math.PI
@@ -218,7 +260,7 @@ async function buildGraph(allFiles) {
   return { nodes, edges, nodeById }
 }
 
-export default function GraphView({ files, activeFile, onOpenFile, onCreateFile, onDeleteFiles, onMoveFile, onArchiveTopic, theme }) {
+export default function GraphView({ files, activeFile, onOpenFile, onCreateFile, onDeleteFiles, onMoveFile, onArchiveTopic, theme, vaultPath, onSwitchSpace, isVisible, recenterToken, centerOnStarToken }) {
   const canvasRef = useRef(null)
   const graphRef = useRef({ nodes: [], edges: [], nodeById: {} })
   const viewRef = useRef({ scale: 1, panX: 0, panY: 0, tiltX: 0, tiltY: 0 })
@@ -231,6 +273,9 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
   const setCtxMenuRef = useRef(setCtxMenu)
   const setHoveredNodeRef = useRef(setHoveredNode)
   const recenterRef = useRef(null)
+  const centerOnStarRef = useRef(null)
+  const gravityImpulseRef = useRef(0) // >0 = attract toward center, <0 = repel from center
+  const centerStarRef = useRef({ sx: -9999, sy: -9999, r: 42 }) // screen pos + hit radius of center star
 
   // Reset move submenu whenever menu closes
   useEffect(() => { if (!ctxMenu) setCtxMoveOpen(false) }, [ctxMenu])
@@ -250,9 +295,34 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
   useEffect(() => {
     if (!files.length) { setIsLoading(false); return }
     setIsLoading(true)
+    const prevNodeById = graphRef.current.nodeById || {}
     buildGraph(files).then(({ nodes, edges, nodeById }) => {
+      // Preserve positions for existing nodes; spawn new/restored nodes from the center
+      // so they visually "fly out" from the graph origin when restored from archive.
+      nodes.forEach(node => {
+        if (prevNodeById[node.id]) {
+          // Re-use the stable position from the previous render
+          const prev = prevNodeById[node.id]
+          node.x = prev.x; node.y = prev.y; node.z = prev.z
+          node.vx = prev.vx; node.vy = prev.vy; node.vz = prev.vz
+          node.pinned = prev.pinned
+        } else {
+          // Brand-new node (restored from archive or just created) — spawn at center
+          // and give it a small outward burst so it flies out visibly.
+          node.x = (Math.random() - 0.5) * 10
+          node.y = (Math.random() - 0.5) * 10
+          node.z = (Math.random() - 0.5) * 10
+          const angle = Math.random() * Math.PI * 2
+          node.vx = Math.cos(angle) * 3
+          node.vy = Math.sin(angle) * 3
+          node.vz = (Math.random() - 0.5) * 1.5
+          node._isNew = true
+        }
+      })
       graphRef.current = { nodes, edges, nodeById }
-      viewRef.current.centered = false  // reset centering for new graph
+      // Only reset centering when the graph changes significantly (first load or vault switch)
+      const hadNodes = Object.keys(prevNodeById).length > 0
+      if (!hadNodes) viewRef.current.centered = false
       setStats({ nodes: nodes.filter(n => !n.isTag).length, edges: edges.filter(e => !e.isTagEdge).length })
       setIsLoading(false)
     })
@@ -269,8 +339,10 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
 
     function resize() {
       if (!canvas.parentElement) return
-      const rect = canvas.parentElement.getBoundingClientRect()
-      W = canvas.width = rect.width; H = canvas.height = rect.height
+      // offsetWidth/offsetHeight give the layout size — unaffected by CSS transforms
+      // on ancestor elements (e.g. the galaxy zoom-out scale(0.5) transition).
+      W = canvas.width = canvas.parentElement.offsetWidth
+      H = canvas.height = canvas.parentElement.offsetHeight
       // Only center once per graph build, and only when canvas has real dimensions
       if (!view.centered && W > 0 && H > 0) {
         if (nodes.length > 0) {
@@ -334,7 +406,7 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
     const maxNotes = Math.max(...nodes.map(n => n.noteCount || 0), 1)
 
     function nodeColor(n) {
-      if (n.id === activeFile?.name) return '#f5a623'
+      if (n._path && n._path === activeFile?.path) return '#f5a623'
       if (n.isJournal) return isDark ? '#2dd4bf' : '#0d9488'           // teal
       if (n.isTag)    return isDark ? 'rgba(251,191,36,0.72)' : 'rgba(180,100,8,0.78)'  // amber
       const hue = folderHue(n.folder)
@@ -393,6 +465,21 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
         b.vx -= fx; b.vy -= fy; b.vz = (b.vz || 0) - fz
       })
 
+      // Gravity / antigravity impulse — decays each frame
+      const gImpulse = gravityImpulseRef.current
+      if (gImpulse !== 0) {
+        const IMPULSE_K = 0.018
+        nodes.forEach(n => {
+          if (n.pinned) return
+          // positive → pull toward origin; negative → push away from origin
+          n.vx   += -n.x         * gImpulse * IMPULSE_K
+          n.vy   += -n.y         * gImpulse * IMPULSE_K
+          n.vz    = (n.vz || 0)  + -(n.z || 0) * gImpulse * IMPULSE_K
+        })
+        gravityImpulseRef.current *= 0.88
+        if (Math.abs(gravityImpulseRef.current) < 0.005) gravityImpulseRef.current = 0
+      }
+
       const t = performance.now() * 0.001
       nodes.forEach(n => {
         if (n.pinned) return
@@ -413,27 +500,44 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
       const t = performance.now() * 0.001
       ctx.clearRect(0, 0, W, H)
 
-      // Dot grid background
-      const dotSpacing = Math.max(28 * view.scale, 10)
-      ctx.fillStyle = isDark ? 'rgba(255,255,255,0.055)' : 'rgba(0,0,0,0.06)'
-      const ox = ((view.panX % dotSpacing) + dotSpacing) % dotSpacing
-      const oy = ((view.panY % dotSpacing) + dotSpacing) % dotSpacing
-      for (let gx = ox - dotSpacing; gx < W + dotSpacing; gx += dotSpacing) {
-        for (let gy = oy - dotSpacing; gy < H + dotSpacing; gy += dotSpacing) {
-          ctx.beginPath(); ctx.arc(gx, gy, 1, 0, Math.PI * 2); ctx.fill()
+      // Nebula clouds + starfield — dark mode only, matches galaxy view aesthetic
+      if (isDark) {
+        // Nebula clouds — soft radial gradients at fixed canvas-relative positions
+        for (const nb of GV_NEBULAS) {
+          const cx = nb.nx / 100 * W, cy = nb.ny / 100 * H
+          const rx = nb.rw * W, ry = nb.rh * H
+          ctx.save()
+          ctx.translate(cx, cy); ctx.rotate(nb.rot); ctx.scale(1, ry / rx)
+          const g = ctx.createRadialGradient(0, 0, 0, 0, 0, rx)
+          g.addColorStop(0,   `rgba(${nb.rgba},${nb.op})`)
+          g.addColorStop(0.5, `rgba(${nb.rgba},${nb.op * 0.4})`)
+          g.addColorStop(1,   `rgba(${nb.rgba},0)`)
+          ctx.beginPath(); ctx.arc(0, 0, rx, 0, Math.PI * 2)
+          ctx.fillStyle = g; ctx.fill()
+          ctx.restore()
+        }
+        // Stars — clustered, organic scatter
+        for (const star of GV_STARS) {
+          ctx.beginPath()
+          ctx.arc(star.nx / 100 * W, star.ny / 100 * H, star.r, 0, Math.PI * 2)
+          ctx.fillStyle = `rgba(255,255,255,${star.op})`
+          ctx.fill()
         }
       }
 
-      // ── Central star at world origin ─────────────────────────────────────────
+      // ── Central star at world origin — color matches the current space in galaxy view ──
       const [starSX, starSY] = toScreen(0, 0, 0)
+      centerStarRef.current.sx = starSX; centerStarRef.current.sy = starSY
       if (starSX > -80 && starSX < W + 80 && starSY > -80 && starSY < H + 80) {
+        const vaultName = (vaultPath || '').split(/[\\/]/).pop() || 'Space'
+        const { r: sr, g: sg, b: sb } = hexToRgb(spaceColor(vaultName))
         const pulse = 1 + Math.sin(t * 1.4) * 0.18
         const starR = 7 * pulse
         // Corona glow
         const corona = ctx.createRadialGradient(starSX, starSY, 0, starSX, starSY, starR * 6)
-        corona.addColorStop(0,   'rgba(255,220,80,0.38)')
-        corona.addColorStop(0.3, 'rgba(255,180,40,0.14)')
-        corona.addColorStop(1,   'rgba(255,160,20,0)')
+        corona.addColorStop(0,   `rgba(${sr},${sg},${sb},0.38)`)
+        corona.addColorStop(0.3, `rgba(${sr},${sg},${sb},0.14)`)
+        corona.addColorStop(1,   `rgba(${sr},${sg},${sb},0)`)
         ctx.beginPath(); ctx.arc(starSX, starSY, starR * 6, 0, Math.PI * 2)
         ctx.fillStyle = corona; ctx.fill()
         // 8-point star
@@ -445,8 +549,8 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
           i === 0 ? ctx.moveTo(Math.cos(a)*r, Math.sin(a)*r) : ctx.lineTo(Math.cos(a)*r, Math.sin(a)*r)
         }
         ctx.closePath()
-        ctx.fillStyle = isDark ? 'rgba(255,215,60,0.92)' : 'rgba(220,150,20,0.88)'
-        ctx.shadowColor = 'rgba(255,200,50,0.8)'; ctx.shadowBlur = 8
+        ctx.fillStyle = `rgba(${sr},${sg},${sb},0.92)`
+        ctx.shadowColor = `rgba(${sr},${sg},${sb},0.8)`; ctx.shadowBlur = 8
         ctx.fill(); ctx.shadowBlur = 0
         ctx.restore()
       }
@@ -492,7 +596,7 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
       sortedNodes.forEach(n => {
         const [sx, sy, pf] = toScreen(n.x, n.y, n.z || 0)
         const r = Math.max((n.size || 7) * view.scale * pf, 0.5)
-        const isActive = n.id === activeFile?.name
+        const isActive = !!(n._path && n._path === activeFile?.path)
 
         if (n.isTag) {
           // Tag node: amber — solid if backed by a real file, dashed if virtual
@@ -745,7 +849,9 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
       } else {
         setHoveredNodeRef.current(hitTest(cx, cy) || null)
       }
-      canvas.style.cursor = hitTest(cx, cy) ? 'pointer' : (panning ? 'grabbing' : 'default')
+      const { sx: _csx, sy: _csy, r: _csr } = centerStarRef.current
+      const overStar = (cx - _csx) ** 2 + (cy - _csy) ** 2 < _csr * _csr
+      canvas.style.cursor = (overStar || hitTest(cx, cy)) ? 'pointer' : (panning ? 'grabbing' : 'default')
     }, sig)
 
     const handleMouseUp = async () => {
@@ -759,9 +865,9 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
       // Handle drop onto black hole → archive the topic
       if (droppedNode && wasOverBH && isDragging && onArchiveTopic && !droppedNode.isTag && !droppedNode.isJournal) {
         isDragging = false
-        const sourceFile = files.find(f => f.name === droppedNode.id)
+        const sourceFile = droppedNode._path ? files.find(f => f.path === droppedNode._path) : null
         const topicFolder = droppedNode.isTheme
-          ? droppedNode.id
+          ? droppedNode._topicFolder
           : sourceFile?.folder?.split('/')[0] || null
         if (topicFolder) {
           const ok = await window.electronAPI.confirmDialog(
@@ -777,13 +883,13 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
       // Handle drop onto topic hub → move file
       if (droppedNode && targetNode && isDragging && onMoveFile && !droppedNode.isTag) {
         isDragging = false
-        const sourceFile = files.find(f => f.name === droppedNode.id)
-        if (sourceFile && sourceFile.folder !== targetNode.id) {
+        const sourceFile = droppedNode._path ? files.find(f => f.path === droppedNode._path) : null
+        if (sourceFile && sourceFile.folder.split('/')[0] !== targetNode._topicFolder) {
           const ok = await window.electronAPI.confirmDialog(
-            `Move "${sourceFile.name}" into "${targetNode.id}"?`,
-            `This will move the note into the ${targetNode.id} folder.`
+            `Move "${sourceFile.name}" into "${targetNode.label}"?`,
+            `This will move the note into the ${targetNode.label} folder.`
           )
-          if (ok) onMoveFile(sourceFile, targetNode.id)
+          if (ok) onMoveFile(sourceFile, targetNode._topicFolder)
         }
       }
       isDragging = false
@@ -796,6 +902,11 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
       // Using position delta avoids the race where handleMouseUp clears isDragging
       // before the click event fires (mouseup always precedes click in the event order).
       if (Math.abs(cx - mouseDownX) > 4 || Math.abs(cy - mouseDownY) > 4) return
+      // Center star hit — open galaxy view
+      const { sx: csx, sy: csy, r: csr } = centerStarRef.current
+      if ((cx - csx) ** 2 + (cy - csy) ** 2 < csr * csr) {
+        if (onSwitchSpace) { onSwitchSpace(); return }
+      }
       const hit = hitTest(cx, cy)
       if (!hit) return
       if (hit.isTag) {
@@ -805,7 +916,7 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
         if (existing) { onOpenFile(existing) }
         else if (onCreateFile) { onCreateFile(`Tags/${tagName}`, `# ${tagName}\n\nA topic from journal tags.\n\n`) }
       } else {
-        const file = files.find(f => f.name === hit.id)
+        const file = hit._path ? files.find(f => f.path === hit._path) : null
         if (file) onOpenFile(file)
       }
     }, sig)
@@ -813,27 +924,52 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
     canvas.addEventListener('mouseleave', () => setHoveredNodeRef.current(null), sig)
 
     recenterRef.current = () => {
+      // Always re-measure using offsetWidth/offsetHeight — layout dimensions,
+      // not affected by CSS transforms (e.g. the galaxy zoom-out scale transition).
+      if (canvas.parentElement) {
+        const ow = canvas.parentElement.offsetWidth
+        const oh = canvas.parentElement.offsetHeight
+        if (ow > 0 && oh > 0) { W = canvas.width = ow; H = canvas.height = oh }
+      }
       const { nodes } = graphRef.current
       if (!nodes.length) return
-      let sumX = 0, sumY = 0
       let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
       nodes.forEach(n => {
-        sumX += n.x; sumY += n.y
         const r = n.size || 7
         minX = Math.min(minX, n.x - r); maxX = Math.max(maxX, n.x + r)
         minY = Math.min(minY, n.y - r); maxY = Math.max(maxY, n.y + r)
       })
-      const cx = sumX / nodes.length, cy = sumY / nodes.length
+      const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2
       const pad = 80
       const cw = canvas.width, ch = canvas.height
       const scaleX = (cw - pad * 2) / Math.max(maxX - minX, 1)
       const scaleY = (ch - pad * 2) / Math.max(maxY - minY, 1)
-      view.scale = Math.min(Math.min(scaleX, scaleY), 1.5)
+      view.scale = Math.min(Math.max(Math.min(scaleX, scaleY), 0.5), 1.5)
       view.panX = cw / 2 - cx * view.scale
       view.panY = ch / 2 - cy * view.scale
       view.tiltX = 0; view.tiltY = 0
       frame = 0
+      draw()
     }
+
+    centerOnStarRef.current = () => {
+      if (canvas.parentElement) {
+        const ow = canvas.parentElement.offsetWidth
+        const oh = canvas.parentElement.offsetHeight
+        if (ow > 0 && oh > 0) { W = canvas.width = ow; H = canvas.height = oh }
+      }
+      view.panX = canvas.width / 2
+      view.panY = canvas.height / 2
+      view.tiltX = 0; view.tiltY = 0
+      frame = 0
+      draw()
+    }
+
+    // Auto-fit after simulation has had time to spread nodes from origin.
+    // 750ms gives the force layout ~45 frames to settle into a readable spread.
+    const autoFitTimer = setTimeout(() => {
+      if (recenterRef.current) recenterRef.current()
+    }, 750)
 
     canvas.addEventListener('wheel', e => {
       e.preventDefault()
@@ -847,12 +983,32 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
 
     return () => {
       running = false
+      clearTimeout(autoFitTimer)
       if (animRef.current) cancelAnimationFrame(animRef.current)
       ro.disconnect()
       ac.abort()  // removes all canvas listeners registered with sig
       document.removeEventListener('mouseup', handleMouseUp)
     }
   }, [isLoading, files, activeFile, onOpenFile, theme])
+
+  // Re-fit whenever the graph becomes visible or recenterToken changes.
+  useEffect(() => {
+    if (!isVisible) return
+    // One rAF lets the browser paint the panel at full size before we measure it.
+    const id = requestAnimationFrame(() => {
+      if (recenterRef.current) recenterRef.current()
+    })
+    return () => cancelAnimationFrame(id)
+  }, [isVisible, recenterToken])
+
+  // Center on the star (world origin) when returning from galaxy view.
+  useEffect(() => {
+    if (!centerOnStarToken) return
+    const id = requestAnimationFrame(() => {
+      if (centerOnStarRef.current) centerOnStarRef.current()
+    })
+    return () => cancelAnimationFrame(id)
+  }, [centerOnStarToken])
 
   return (
     <div className="flex flex-col h-full">
@@ -876,13 +1032,45 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
             </svg>
             Recenter
           </button>
+          <button
+            onClick={() => { gravityImpulseRef.current = 1 }}
+            title="Gravity — pull nodes toward center"
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs transition-all duration-150"
+            style={{ color: 'var(--text-muted)', border: '1px solid var(--glass-border)', background: 'transparent' }}
+            onMouseEnter={e => { e.currentTarget.style.color = 'var(--text-primary)'; e.currentTarget.style.background = 'var(--glass-bg-strong)' }}
+            onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.background = 'transparent' }}
+          >
+            <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="12" y1="2" x2="12" y2="8"/><polyline points="9 5 12 8 15 5"/>
+              <line x1="22" y1="12" x2="16" y2="12"/><polyline points="19 9 16 12 19 15"/>
+              <line x1="12" y1="22" x2="12" y2="16"/><polyline points="15 19 12 16 9 19"/>
+              <line x1="2" y1="12" x2="8" y2="12"/><polyline points="5 15 8 12 5 9"/>
+            </svg>
+            Gravity
+          </button>
+          <button
+            onClick={() => { gravityImpulseRef.current = -1 }}
+            title="Antigravity — push nodes away from center"
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs transition-all duration-150"
+            style={{ color: 'var(--text-muted)', border: '1px solid var(--glass-border)', background: 'transparent' }}
+            onMouseEnter={e => { e.currentTarget.style.color = 'var(--text-primary)'; e.currentTarget.style.background = 'var(--glass-bg-strong)' }}
+            onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.background = 'transparent' }}
+          >
+            <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="12" y1="8" x2="12" y2="2"/><polyline points="15 5 12 2 9 5"/>
+              <line x1="16" y1="12" x2="22" y2="12"/><polyline points="19 9 22 12 19 15"/>
+              <line x1="12" y1="16" x2="12" y2="22"/><polyline points="9 19 12 22 15 19"/>
+              <line x1="8" y1="12" x2="2" y2="12"/><polyline points="5 9 2 12 5 15"/>
+            </svg>
+            Antigravity
+          </button>
           <span className="text-[10px] font-mono tabular-nums" style={{ color: 'var(--text-dim)' }}>
             {stats.nodes} nodes · {stats.edges} edges
           </span>
         </div>
       </div>
 
-      <div className="flex-1 relative overflow-hidden">
+      <div className="flex-1 relative overflow-hidden" style={{ background: theme === 'light' ? 'var(--bg-primary)' : 'radial-gradient(ellipse at 42% 58%, #09091c 0%, #020207 100%)' }}>
         {isLoading ? (
           <div className="flex h-full items-center justify-center">
             <span className="text-[#6b7280]/50 text-sm">Building graph…</span>
@@ -938,14 +1126,14 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
         {/* Node context menu */}
         {ctxMenu && (() => {
           const node = ctxMenu.node
-          const file = files.find(f => f.name === node.id)
+          const file = node._path ? files.find(f => f.path === node._path) : null
           const isTagNode = node.isTag
 
           // Available topic hubs for "Move to" (exclude current folder and the node itself)
           const topics = graphRef.current.nodes.filter(n =>
             n.isTheme && !n.isJournal && !n.isTag &&
             n.id !== node.id &&
-            n.id !== file?.folder
+            n._topicFolder !== file?.folder?.split('/')[0]
           )
 
           // Collect files that would be deleted
@@ -1020,7 +1208,7 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
                         <button key={topic.id}
                           onClick={async () => {
                             setCtxMenu(null)
-                            if (onMoveFile) onMoveFile(file, topic.id)
+                            if (onMoveFile) onMoveFile(file, topic._topicFolder)
                           }}
                           style={{ ...btnBase, color: '#a78bfa', paddingLeft: 20, display: 'flex', alignItems: 'center', gap: 6 }}
                           onMouseEnter={e => e.currentTarget.style.background = 'rgba(167,139,250,0.1)'}
@@ -1040,7 +1228,7 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
                 <button
                   onClick={async () => {
                     setCtxMenu(null)
-                    const topicFolder = node.id
+                    const topicFolder = node._topicFolder
                     const ok = await window.electronAPI.confirmDialog(
                       `Archive "${topicFolder}"?`,
                       `This will move "${topicFolder}" and all its notes to the Archive folder.`
