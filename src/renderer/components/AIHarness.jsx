@@ -10,6 +10,13 @@ const PROVIDERS = [
   { value: 'anthropic', label: 'Anthropic' },
   { value: 'openai', label: 'OpenAI' },
   { value: 'gemini', label: 'Google Gemini' },
+  { value: 'local', label: 'Local / Custom' },
+]
+
+const LOCAL_PRESETS = [
+  { label: 'Ollama', url: 'http://localhost:11434/v1' },
+  { label: 'LM Studio', url: 'http://localhost:1234/v1' },
+  { label: 'llama.cpp', url: 'http://localhost:8080/v1' },
 ]
 
 const MODELS = {
@@ -63,7 +70,11 @@ export default function AIHarness({ currentFile }) {
   }, [config])
 
   const handleProviderChange = (provider) => {
-    const next = { ...config, provider, model: MODELS[provider][0].value }
+    const next = {
+      ...config,
+      provider,
+      model: MODELS[provider]?.[0]?.value ?? (config.customModel || ''),
+    }
     setConfig(next)
     setKeyDraft(next.apiKeys?.[provider] || '')
     window.harnessConfig?.set(next)
@@ -123,44 +134,106 @@ export default function AIHarness({ currentFile }) {
               </select>
             </div>
 
-            <div className="flex flex-col gap-1">
-              <label className="text-xs text-[#6b7280] uppercase tracking-wider font-semibold">Model</label>
-              <select
-                value={config.model || models[0]?.value}
-                onChange={e => handleModelChange(e.target.value)}
-                className="w-full text-sm text-[#e2e4f0] bg-transparent px-2 py-1 rounded focus:outline-none"
-                style={{ border: `1px solid ${GLASS_BORDER}`, background: 'rgba(0,0,0,0.2)' }}
-              >
-                {models.map(m => <option key={m.value} value={m.value} style={{ background: 'var(--option-bg)' }}>{m.label}</option>)}
-              </select>
-            </div>
+            {provider === 'local' ? (
+              <>
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs text-[#6b7280] uppercase tracking-wider font-semibold">Base URL</label>
+                  <div className="flex flex-col gap-1">
+                    <input
+                      type="text"
+                      value={config.baseURL || ''}
+                      onChange={e => saveConfig({ baseURL: e.target.value })}
+                      placeholder="http://localhost:11434/v1"
+                      className="w-full text-xs text-[#e2e4f0] bg-transparent px-2 py-1 rounded focus:outline-none"
+                      style={{ border: `1px solid ${GLASS_BORDER}` }}
+                      onFocus={e => e.currentTarget.style.borderColor = 'rgba(124,58,237,0.4)'}
+                      onBlur={e => e.currentTarget.style.borderColor = GLASS_BORDER}
+                    />
+                    <div className="flex gap-1 flex-wrap">
+                      {LOCAL_PRESETS.map(p => (
+                        <button
+                          key={p.label}
+                          onClick={() => saveConfig({ baseURL: p.url })}
+                          className="text-[10px] px-1.5 py-0.5 rounded transition-all"
+                          style={{ color: '#6b7280', border: `1px solid ${GLASS_BORDER}`, background: 'transparent' }}
+                          onMouseEnter={e => { e.currentTarget.style.color = '#a78bfa'; e.currentTarget.style.borderColor = 'rgba(124,58,237,0.4)' }}
+                          onMouseLeave={e => { e.currentTarget.style.color = '#6b7280'; e.currentTarget.style.borderColor = GLASS_BORDER }}
+                          title={p.url}
+                        >{p.label}</button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
 
-            <div className="flex flex-col gap-1">
-              <label className="text-xs text-[#6b7280] uppercase tracking-wider font-semibold">API Key</label>
-              <div className="flex gap-1">
-                <input
-                  type="password"
-                  value={keyDraft}
-                  onChange={e => setKeyDraft(e.target.value)}
-                  placeholder="sk-..."
-                  className="flex-1 min-w-0 text-xs text-[#e2e4f0] bg-transparent px-2 py-1 rounded focus:outline-none"
-                  style={{ border: `1px solid ${GLASS_BORDER}` }}
-                  onFocus={e => e.currentTarget.style.borderColor = 'rgba(124,58,237,0.4)'}
-                  onBlur={e => e.currentTarget.style.borderColor = GLASS_BORDER}
-                  onKeyDown={e => e.key === 'Enter' && handleSaveKey()}
-                />
-                <button
-                  onClick={handleSaveKey}
-                  className="text-xs px-2 py-1 rounded text-white flex-shrink-0"
-                  style={{ background: 'linear-gradient(135deg, #7c3aed, #6d28d9)' }}
-                >
-                  Save
-                </button>
-              </div>
-              {config.apiKeys?.[provider] && (
-                <span className="text-xs text-[#a6e3a1]/60">Key saved</span>
-              )}
-            </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs text-[#6b7280] uppercase tracking-wider font-semibold">Model name</label>
+                  <input
+                    type="text"
+                    value={config.customModel || ''}
+                    onChange={e => saveConfig({ customModel: e.target.value, model: e.target.value })}
+                    placeholder="e.g. llama3.2, mistral, phi-3"
+                    className="w-full text-xs text-[#e2e4f0] bg-transparent px-2 py-1 rounded focus:outline-none"
+                    style={{ border: `1px solid ${GLASS_BORDER}` }}
+                    onFocus={e => e.currentTarget.style.borderColor = 'rgba(124,58,237,0.4)'}
+                    onBlur={e => e.currentTarget.style.borderColor = GLASS_BORDER}
+                  />
+                  <span className="text-[10px]" style={{ color: '#6b7280' }}>Must match the model ID your server expects</span>
+                </div>
+
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs text-[#6b7280] uppercase tracking-wider font-semibold">API Key <span style={{ fontWeight: 400, textTransform: 'none', opacity: 0.6 }}>(optional)</span></label>
+                  <div className="flex gap-1">
+                    <input
+                      type="password"
+                      value={keyDraft}
+                      onChange={e => setKeyDraft(e.target.value)}
+                      placeholder="Leave blank if not required"
+                      className="flex-1 min-w-0 text-xs text-[#e2e4f0] bg-transparent px-2 py-1 rounded focus:outline-none"
+                      style={{ border: `1px solid ${GLASS_BORDER}` }}
+                      onFocus={e => e.currentTarget.style.borderColor = 'rgba(124,58,237,0.4)'}
+                      onBlur={e => e.currentTarget.style.borderColor = GLASS_BORDER}
+                      onKeyDown={e => e.key === 'Enter' && handleSaveKey()}
+                    />
+                    <button onClick={handleSaveKey} className="text-xs px-2 py-1 rounded text-white flex-shrink-0" style={{ background: 'linear-gradient(135deg, #7c3aed, #6d28d9)' }}>Save</button>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs text-[#6b7280] uppercase tracking-wider font-semibold">Model</label>
+                  <select
+                    value={config.model || models[0]?.value}
+                    onChange={e => handleModelChange(e.target.value)}
+                    className="w-full text-sm text-[#e2e4f0] bg-transparent px-2 py-1 rounded focus:outline-none"
+                    style={{ border: `1px solid ${GLASS_BORDER}`, background: 'rgba(0,0,0,0.2)' }}
+                  >
+                    {models.map(m => <option key={m.value} value={m.value} style={{ background: 'var(--option-bg)' }}>{m.label}</option>)}
+                  </select>
+                </div>
+
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs text-[#6b7280] uppercase tracking-wider font-semibold">API Key</label>
+                  <div className="flex gap-1">
+                    <input
+                      type="password"
+                      value={keyDraft}
+                      onChange={e => setKeyDraft(e.target.value)}
+                      placeholder="sk-..."
+                      className="flex-1 min-w-0 text-xs text-[#e2e4f0] bg-transparent px-2 py-1 rounded focus:outline-none"
+                      style={{ border: `1px solid ${GLASS_BORDER}` }}
+                      onFocus={e => e.currentTarget.style.borderColor = 'rgba(124,58,237,0.4)'}
+                      onBlur={e => e.currentTarget.style.borderColor = GLASS_BORDER}
+                      onKeyDown={e => e.key === 'Enter' && handleSaveKey()}
+                    />
+                    <button onClick={handleSaveKey} className="text-xs px-2 py-1 rounded text-white flex-shrink-0" style={{ background: 'linear-gradient(135deg, #7c3aed, #6d28d9)' }}>Save</button>
+                  </div>
+                  {config.apiKeys?.[provider] && (
+                    <span className="text-xs text-[#a6e3a1]/60">Key saved</span>
+                  )}
+                </div>
+              </>
+            )}
           </div>
 
           {/* MCP panel */}

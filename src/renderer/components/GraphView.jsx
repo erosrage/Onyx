@@ -89,7 +89,7 @@ function getNodeLocation(node, files) {
 
 async function buildGraph(allFiles) {
   // Exclude system/utility folders — Archive, assets, whiteboards should not appear in the graph
-  const GRAPH_EXCLUDED = new Set(['Archive', 'assets', 'whiteboards'])
+  const GRAPH_EXCLUDED = new Set(['assets', 'whiteboards'])
   const files = allFiles.filter(f => !GRAPH_EXCLUDED.has((f.folder || '').split('/')[0]))
   const results = await Promise.all(files.map(f => window.electronAPI.readFile(f.path)))
   const linkMap = {}
@@ -158,6 +158,7 @@ async function buildGraph(allFiles) {
     if (!file.folder) return
     const id = fileId(file)
     const topFolder = file.folder.split('/')[0]
+    if (topFolder === 'Archive') return // archived files float freely
     if (file.folder === file.name) return  // this file IS the topic root — skip
 
     const topicId = properTopicRoots.has(topFolder.toLowerCase())
@@ -205,6 +206,7 @@ async function buildGraph(allFiles) {
       z: (Math.random() - 0.5) * 60,
       vx: 0, vy: 0, vz: 0, pinned: false,
       _floatPhase: Math.random() * Math.PI * 2,
+      _archived: file.folder?.split('/')[0] === 'Archive',
     }
   })
 
@@ -260,7 +262,7 @@ async function buildGraph(allFiles) {
   return { nodes, edges, nodeById }
 }
 
-export default function GraphView({ files, activeFile, onOpenFile, onCreateFile, onDeleteFiles, onMoveFile, onArchiveTopic, theme, vaultPath, onSwitchSpace, isVisible, recenterToken, centerOnStarToken }) {
+export default function GraphView({ files, activeFile, onOpenFile, onCreateFile, onDeleteFiles, onMoveFile, onArchiveTopic, onArchiveFile, onUnarchiveTopic, onUnarchiveFile, onRevealFolder, theme, vaultPath, onSwitchSpace, isVisible, recenterToken, centerOnStarToken, hasOverlay }) {
   const canvasRef = useRef(null)
   const graphRef = useRef({ nodes: [], edges: [], nodeById: {} })
   const viewRef = useRef({ scale: 1, panX: 0, panY: 0, tiltX: 0, tiltY: 0 })
@@ -270,6 +272,14 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
   const [ctxMenu, setCtxMenu] = useState(null) // { node, x, y }
   const [ctxMoveOpen, setCtxMoveOpen] = useState(false)
   const [hoveredNode, setHoveredNode] = useState(null)
+  const [confirmModal, setConfirmModal] = useState(null) // { title, message }
+  const confirmResolveRef = useRef(null)
+  // showConfirm is ref-stable so canvas handlers can call it without going stale
+  const showConfirmRef = useRef(null)
+  showConfirmRef.current = (title, message) => new Promise(resolve => {
+    confirmResolveRef.current = resolve
+    setConfirmModal({ title, message })
+  })
   const setCtxMenuRef = useRef(setCtxMenu)
   const setHoveredNodeRef = useRef(setHoveredNode)
   const recenterRef = useRef(null)
@@ -320,10 +330,11 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
         }
       })
       graphRef.current = { nodes, edges, nodeById }
-      // Only reset centering when the graph changes significantly (first load or vault switch)
+      // Reset centering on first load OR vault switch (no node overlap with previous graph)
       const hadNodes = Object.keys(prevNodeById).length > 0
-      if (!hadNodes) viewRef.current.centered = false
-      setStats({ nodes: nodes.filter(n => !n.isTag).length, edges: edges.filter(e => !e.isTagEdge).length })
+      const isVaultSwitch = hadNodes && nodes.length > 0 && nodes.every(n => !prevNodeById[n.id])
+      if (!hadNodes || isVaultSwitch) viewRef.current.centered = false
+      setStats({ nodes: nodes.filter(n => !n.isTag && !n._archived).length, edges: edges.filter(e => !e.isTagEdge).length })
       setIsLoading(false)
     })
   }, [files])
@@ -406,6 +417,7 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
     const maxNotes = Math.max(...nodes.map(n => n.noteCount || 0), 1)
 
     function nodeColor(n) {
+      if (n._archived) return isDark ? 'rgba(148,163,184,0.45)' : 'rgba(100,116,139,0.38)'
       if (n._path && n._path === activeFile?.path) return '#f5a623'
       if (n.isJournal) return isDark ? '#2dd4bf' : '#0d9488'           // teal
       if (n.isTag)    return isDark ? 'rgba(251,191,36,0.72)' : 'rgba(180,100,8,0.78)'  // amber
@@ -553,10 +565,17 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
         ctx.shadowColor = `rgba(${sr},${sg},${sb},0.8)`; ctx.shadowBlur = 8
         ctx.fill(); ctx.shadowBlur = 0
         ctx.restore()
+        // Vault name label beneath the star
+        ctx.font = `bold ${Math.max(10, 11 * Math.min(view.scale, 1.4))}px -apple-system,"Segoe UI Variable",sans-serif`
+        ctx.textAlign = 'center'
+        ctx.fillStyle = `rgba(${sr},${sg},${sb},0.85)`
+        ctx.fillText(vaultName, starSX, starSY + starR + 14 * Math.min(view.scale, 1))
       }
 
       // Edges
       edges.forEach(e => {
+        const _ea = nodeById[e.source]?._archived || nodeById[e.target]?._archived
+        if (_ea) ctx.globalAlpha = 0.15
         const a = nodeById[e.source], b = nodeById[e.target]
         if (!a || !b) return
         const [ax, ay] = toScreen(a.x, a.y, a.z || 0), [bx, by, bpf] = toScreen(b.x, b.y, b.z || 0)
@@ -586,6 +605,7 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
           ctx.lineTo(tx - 7 * Math.cos(angle + 0.4), ty - 7 * Math.sin(angle + 0.4))
           ctx.closePath(); ctx.fillStyle = isDark ? 'rgba(148,163,184,0.38)' : 'rgba(100,116,139,0.32)'; ctx.fill()
         }
+        if (_ea) ctx.globalAlpha = 1
       })
 
       // Nodes — sort by z depth so far nodes draw first (painter's algorithm)
@@ -594,6 +614,8 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
         return pfb - pfa  // smaller pf = farther away = draw first
       })
       sortedNodes.forEach(n => {
+        const _prevAlpha = ctx.globalAlpha
+        if (n._archived) ctx.globalAlpha = 0.32
         const [sx, sy, pf] = toScreen(n.x, n.y, n.z || 0)
         const r = Math.max((n.size || 7) * view.scale * pf, 0.5)
         const isActive = !!(n._path && n._path === activeFile?.path)
@@ -619,6 +641,7 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
             ctx.textAlign = 'center'
             ctx.fillText(n.label, sx, sy + r + 10 * Math.min(view.scale, 1))
           }
+          ctx.globalAlpha = _prevAlpha
           return
         }
 
@@ -682,40 +705,41 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
           const label = n.label.length > 22 ? n.label.slice(0, 22) + '…' : n.label
           ctx.fillText(label, sx, sy + r + 12 * Math.min(view.scale, 1))
         }
+        ctx.globalAlpha = _prevAlpha
       })
 
       // ── Black hole (fixed screen-space, bottom-right) ─────────────────────
       bhX = W - 72; bhY = H - 72
       const bhActive = bhHover
-      const spin = t * 0.5
-      // Outer glow
+      const spin = Math.sin(t * 0.06) * 0.22
+      // Outer glow — warm orange/amber
       const bhGrad = ctx.createRadialGradient(bhX, bhY, BH_R * 0.3, bhX, bhY, BH_R * 2.8)
-      bhGrad.addColorStop(0,   bhActive ? 'rgba(180,80,255,0.55)' : 'rgba(100,40,200,0.28)')
-      bhGrad.addColorStop(0.5, bhActive ? 'rgba(100,20,220,0.22)' : 'rgba(60,10,150,0.10)')
+      bhGrad.addColorStop(0,   bhActive ? 'rgba(255,160,40,0.52)' : 'rgba(255,110,15,0.28)')
+      bhGrad.addColorStop(0.5, bhActive ? 'rgba(200,60,0,0.22)'  : 'rgba(180,50,0,0.10)')
       bhGrad.addColorStop(1,   'rgba(0,0,0,0)')
       ctx.beginPath(); ctx.arc(bhX, bhY, BH_R * 2.8, 0, Math.PI * 2)
       ctx.fillStyle = bhGrad; ctx.fill()
-      // Accretion disk (tilted ellipse, rotating)
+      // Accretion disk (tilted ellipse, wobbling)
       ctx.save(); ctx.translate(bhX, bhY); ctx.rotate(spin)
       ctx.beginPath()
-      ctx.ellipse(0, 0, BH_R * 1.5, BH_R * 0.4, 0, 0, Math.PI * 2)
-      ctx.strokeStyle = bhActive ? 'rgba(200,120,255,0.75)' : 'rgba(140,70,230,0.45)'
-      ctx.lineWidth = bhActive ? 3.5 : 2.5; ctx.stroke()
+      ctx.ellipse(0, 0, BH_R * 1.5, BH_R * 0.32, 0, 0, Math.PI * 2)
+      ctx.strokeStyle = bhActive ? 'rgba(255,210,60,0.88)' : 'rgba(255,160,30,0.55)'
+      ctx.lineWidth = bhActive ? 4 : 2.5; ctx.stroke()
       ctx.restore()
       ctx.save(); ctx.translate(bhX, bhY); ctx.rotate(spin + Math.PI * 0.6)
       ctx.beginPath()
-      ctx.ellipse(0, 0, BH_R * 1.1, BH_R * 0.28, 0, 0, Math.PI * 2)
-      ctx.strokeStyle = bhActive ? 'rgba(220,160,255,0.45)' : 'rgba(160,100,240,0.28)'
+      ctx.ellipse(0, 0, BH_R * 1.05, BH_R * 0.22, 0, 0, Math.PI * 2)
+      ctx.strokeStyle = bhActive ? 'rgba(255,120,20,0.50)' : 'rgba(200,70,0,0.28)'
       ctx.lineWidth = 1.5; ctx.stroke()
       ctx.restore()
-      // Dark singularity
+      // Dark singularity with photon ring
       ctx.beginPath(); ctx.arc(bhX, bhY, BH_R * 0.62, 0, Math.PI * 2)
       ctx.fillStyle = '#000'; ctx.fill()
-      ctx.strokeStyle = bhActive ? 'rgba(200,120,255,0.9)' : 'rgba(140,70,230,0.6)'
-      ctx.lineWidth = 1.5; ctx.stroke()
+      ctx.strokeStyle = bhActive ? 'rgba(255,200,70,1)' : 'rgba(255,160,30,0.80)'
+      ctx.lineWidth = bhActive ? 2.5 : 2; ctx.stroke()
       // Label
       ctx.font = bhActive ? 'bold 10px -apple-system, sans-serif' : '9px -apple-system, sans-serif'
-      ctx.fillStyle = bhActive ? 'rgba(220,160,255,0.95)' : 'rgba(160,100,220,0.55)'
+      ctx.fillStyle = bhActive ? 'rgba(255,210,80,0.95)' : 'rgba(220,130,30,0.55)'
       ctx.textAlign = 'center'
       ctx.fillText(bhActive ? '⬤ Archive' : 'Archive', bhX, bhY + BH_R + 15)
     }
@@ -862,21 +886,15 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
       dropTarget = null; bhHover = false
       panning = false
 
-      // Handle drop onto black hole → archive the topic
-      if (droppedNode && wasOverBH && isDragging && onArchiveTopic && !droppedNode.isTag && !droppedNode.isJournal) {
+      // Handle drop onto black hole → archive the topic or note
+      if (droppedNode && wasOverBH && isDragging && !droppedNode.isTag && !droppedNode.isJournal && !droppedNode._archived) {
         isDragging = false
         const sourceFile = droppedNode._path ? files.find(f => f.path === droppedNode._path) : null
-        const topicFolder = droppedNode.isTheme
-          ? droppedNode._topicFolder
-          : sourceFile?.folder?.split('/')[0] || null
-        if (topicFolder) {
-          const ok = await window.electronAPI.confirmDialog(
-            `Archive "${topicFolder}"?`,
-            `This will move "${topicFolder}" and all its notes to the Archive folder.`
-          )
-          if (ok) onArchiveTopic(topicFolder)
+        if (droppedNode.isTheme && onArchiveTopic) {
+          onArchiveTopic(droppedNode._topicFolder)
+        } else if (sourceFile && onArchiveFile) {
+          onArchiveFile(sourceFile)
         }
-        isDragging = false
         return
       }
 
@@ -885,7 +903,7 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
         isDragging = false
         const sourceFile = droppedNode._path ? files.find(f => f.path === droppedNode._path) : null
         if (sourceFile && sourceFile.folder.split('/')[0] !== targetNode._topicFolder) {
-          const ok = await window.electronAPI.confirmDialog(
+          const ok = await showConfirmRef.current(
             `Move "${sourceFile.name}" into "${targetNode.label}"?`,
             `This will move the note into the ${targetNode.label} folder.`
           )
@@ -918,6 +936,7 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
       } else {
         const file = hit._path ? files.find(f => f.path === hit._path) : null
         if (file) onOpenFile(file)
+        else if (hit.isTheme && hit._topicFolder && onRevealFolder) onRevealFolder(hit._topicFolder)
       }
     }, sig)
 
@@ -965,12 +984,6 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
       draw()
     }
 
-    // Auto-fit after simulation has had time to spread nodes from origin.
-    // 750ms gives the force layout ~45 frames to settle into a readable spread.
-    const autoFitTimer = setTimeout(() => {
-      if (recenterRef.current) recenterRef.current()
-    }, 750)
-
     canvas.addEventListener('wheel', e => {
       e.preventDefault()
       const [cx, cy] = getCanvasXY(e)
@@ -983,7 +996,6 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
 
     return () => {
       running = false
-      clearTimeout(autoFitTimer)
       if (animRef.current) cancelAnimationFrame(animRef.current)
       ro.disconnect()
       ac.abort()  // removes all canvas listeners registered with sig
@@ -1010,67 +1022,79 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
     return () => cancelAnimationFrame(id)
   }, [centerOnStarToken])
 
-  return (
-    <div className="flex flex-col h-full">
-      <div
-        className="flex items-center justify-between px-4 py-2 flex-shrink-0"
-        style={{ background: 'var(--glass-bg)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', borderBottom: GLASS_BORDER }}
-      >
-        <span className="text-sm font-medium tracking-wide" style={{ color: 'var(--text-muted)' }}>Graph View</span>
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => recenterRef.current?.()}
-            title="Center on all nodes"
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs transition-all duration-150"
-            style={{ color: 'var(--text-muted)', border: '1px solid var(--glass-border)', background: 'transparent' }}
-            onMouseEnter={e => { e.currentTarget.style.color = 'var(--text-primary)'; e.currentTarget.style.background = 'var(--glass-bg-strong)' }}
-            onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.background = 'transparent' }}
-          >
-            <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-              <circle cx="12" cy="12" r="3"/><line x1="12" y1="2" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22"/>
-              <line x1="2" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="22" y2="12"/>
-            </svg>
-            Recenter
-          </button>
-          <button
-            onClick={() => { gravityImpulseRef.current = 1 }}
-            title="Gravity — pull nodes toward center"
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs transition-all duration-150"
-            style={{ color: 'var(--text-muted)', border: '1px solid var(--glass-border)', background: 'transparent' }}
-            onMouseEnter={e => { e.currentTarget.style.color = 'var(--text-primary)'; e.currentTarget.style.background = 'var(--glass-bg-strong)' }}
-            onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.background = 'transparent' }}
-          >
-            <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="12" y1="2" x2="12" y2="8"/><polyline points="9 5 12 8 15 5"/>
-              <line x1="22" y1="12" x2="16" y2="12"/><polyline points="19 9 16 12 19 15"/>
-              <line x1="12" y1="22" x2="12" y2="16"/><polyline points="15 19 12 16 9 19"/>
-              <line x1="2" y1="12" x2="8" y2="12"/><polyline points="5 15 8 12 5 9"/>
-            </svg>
-            Gravity
-          </button>
-          <button
-            onClick={() => { gravityImpulseRef.current = -1 }}
-            title="Antigravity — push nodes away from center"
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs transition-all duration-150"
-            style={{ color: 'var(--text-muted)', border: '1px solid var(--glass-border)', background: 'transparent' }}
-            onMouseEnter={e => { e.currentTarget.style.color = 'var(--text-primary)'; e.currentTarget.style.background = 'var(--glass-bg-strong)' }}
-            onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.background = 'transparent' }}
-          >
-            <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="12" y1="8" x2="12" y2="2"/><polyline points="15 5 12 2 9 5"/>
-              <line x1="16" y1="12" x2="22" y2="12"/><polyline points="19 9 22 12 19 15"/>
-              <line x1="12" y1="16" x2="12" y2="22"/><polyline points="9 19 12 22 15 19"/>
-              <line x1="8" y1="12" x2="2" y2="12"/><polyline points="5 9 2 12 5 15"/>
-            </svg>
-            Antigravity
-          </button>
-          <span className="text-[10px] font-mono tabular-nums" style={{ color: 'var(--text-dim)' }}>
-            {stats.nodes} nodes · {stats.edges} edges
-          </span>
-        </div>
-      </div>
+  // Recenter after graph finishes building — runs AFTER the canvas effect has set
+  // recenterRef.current, guaranteeing we fit the correct vault's nodes.
+  // Delay gives the force simulation time to spread nodes from their spawn positions.
+  useEffect(() => {
+    if (isLoading || !isVisible) return
+    const id = setTimeout(() => {
+      if (recenterRef.current) recenterRef.current()
+    }, 900)
+    return () => clearTimeout(id)
+  }, [isLoading, isVisible])
 
-      <div className="flex-1 relative overflow-hidden" style={{ background: theme === 'light' ? 'var(--bg-primary)' : 'radial-gradient(ellipse at 42% 58%, #09091c 0%, #020207 100%)' }}>
+  return (
+    <div className="relative h-full" style={{ background: theme === 'light' ? 'var(--bg-primary)' : 'radial-gradient(ellipse at 42% 58%, #09091c 0%, #020207 100%)' }}>
+
+      {/* Floating top-left label — hidden when another panel overlays the graph */}
+      {!hasOverlay && (
+        <div className="absolute top-3 left-3" style={{ zIndex: 10 }}>
+          <span className="text-sm font-medium tracking-wide" style={{ color: 'rgba(255,255,255,0.28)' }}>Home Panel</span>
+        </div>
+      )}
+
+      {/* Floating top-right controls — hidden when another panel overlays the graph */}
+      {!hasOverlay && <div className="absolute top-3 right-3 flex items-center gap-1.5" style={{ zIndex: 10 }}>
+        <button
+          onClick={() => recenterRef.current?.()}
+          title="Center"
+          className="flex items-center justify-center w-7 h-7 rounded-lg transition-all duration-150"
+          style={{ background: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(8px)', border: '1px solid rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.45)' }}
+          onMouseEnter={e => { e.currentTarget.style.color = 'rgba(255,255,255,0.9)'; e.currentTarget.style.background = 'rgba(0,0,0,0.65)' }}
+          onMouseLeave={e => { e.currentTarget.style.color = 'rgba(255,255,255,0.45)'; e.currentTarget.style.background = 'rgba(0,0,0,0.45)' }}
+        >
+          <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <circle cx="12" cy="12" r="3"/><line x1="12" y1="2" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22"/>
+            <line x1="2" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="22" y2="12"/>
+          </svg>
+        </button>
+        <button
+          onClick={() => { gravityImpulseRef.current = 1 }}
+          title="Gravity — pull nodes toward center"
+          className="flex items-center justify-center w-7 h-7 rounded-lg transition-all duration-150"
+          style={{ background: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(8px)', border: '1px solid rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.45)' }}
+          onMouseEnter={e => { e.currentTarget.style.color = 'rgba(255,255,255,0.9)'; e.currentTarget.style.background = 'rgba(0,0,0,0.65)' }}
+          onMouseLeave={e => { e.currentTarget.style.color = 'rgba(255,255,255,0.45)'; e.currentTarget.style.background = 'rgba(0,0,0,0.45)' }}
+        >
+          <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="12" y1="2" x2="12" y2="8"/><polyline points="9 5 12 8 15 5"/>
+            <line x1="22" y1="12" x2="16" y2="12"/><polyline points="19 9 16 12 19 15"/>
+            <line x1="12" y1="22" x2="12" y2="16"/><polyline points="15 19 12 16 9 19"/>
+            <line x1="2" y1="12" x2="8" y2="12"/><polyline points="5 15 8 12 5 9"/>
+          </svg>
+        </button>
+        <button
+          onClick={() => { gravityImpulseRef.current = -1 }}
+          title="Antigravity — push nodes away from center"
+          className="flex items-center justify-center w-7 h-7 rounded-lg transition-all duration-150"
+          style={{ background: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(8px)', border: '1px solid rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.45)' }}
+          onMouseEnter={e => { e.currentTarget.style.color = 'rgba(255,255,255,0.9)'; e.currentTarget.style.background = 'rgba(0,0,0,0.65)' }}
+          onMouseLeave={e => { e.currentTarget.style.color = 'rgba(255,255,255,0.45)'; e.currentTarget.style.background = 'rgba(0,0,0,0.45)' }}
+        >
+          <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="12" y1="8" x2="12" y2="2"/><polyline points="15 5 12 2 9 5"/>
+            <line x1="16" y1="12" x2="22" y2="12"/><polyline points="19 9 22 12 19 15"/>
+            <line x1="12" y1="16" x2="12" y2="22"/><polyline points="9 19 12 22 15 19"/>
+            <line x1="8" y1="12" x2="2" y2="12"/><polyline points="5 9 2 12 5 15"/>
+          </svg>
+        </button>
+        <span className="text-[10px] font-mono tabular-nums px-2 py-1 rounded-lg"
+          style={{ background: 'rgba(0,0,0,0.35)', backdropFilter: 'blur(8px)', color: 'rgba(255,255,255,0.25)', border: '1px solid rgba(255,255,255,0.06)' }}>
+          {stats.nodes}n · {stats.edges}e
+        </span>
+      </div>}
+
+      <div className="absolute inset-0">
         {isLoading ? (
           <div className="flex h-full items-center justify-center">
             <span className="text-[#6b7280]/50 text-sm">Building graph…</span>
@@ -1131,7 +1155,7 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
 
           // Available topic hubs for "Move to" (exclude current folder and the node itself)
           const topics = graphRef.current.nodes.filter(n =>
-            n.isTheme && !n.isJournal && !n.isTag &&
+            n.isTheme && !n.isJournal && !n.isTag && !n._archived &&
             n.id !== node.id &&
             n._topicFolder !== file?.folder?.split('/')[0]
           )
@@ -1151,7 +1175,7 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
             setCtxMenu(null)
             if (!toDelete.length) return
             const label = toDelete.length > 1 ? `"${file?.name}" and ${toDelete.length - 1} sub-note(s)` : `"${file?.name || node.label}"`
-            const ok = await window.electronAPI.confirmDialog(
+            const ok = await showConfirmRef.current(
               `Delete ${label}?`,
               toDelete.length > 1
                 ? `This will permanently delete:\n${toDelete.map(f => f.name).join('\n')}`
@@ -1223,22 +1247,37 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
                 </>
               )}
 
-              {/* Archive topic */}
-              {node.isTheme && !node.isJournal && !node.isTag && onArchiveTopic && (
+              {/* Archive / Restore */}
+              {node._archived && (onUnarchiveTopic || onUnarchiveFile) && (
                 <button
-                  onClick={async () => {
+                  onClick={() => {
                     setCtxMenu(null)
-                    const topicFolder = node._topicFolder
-                    const ok = await window.electronAPI.confirmDialog(
-                      `Archive "${topicFolder}"?`,
-                      `This will move "${topicFolder}" and all its notes to the Archive folder.`
-                    )
-                    if (ok) onArchiveTopic(topicFolder)
+                    if (file && onUnarchiveFile) {
+                      onUnarchiveFile(file.relativePath.replace(/\\/g, '/'))
+                    } else if (node._topicFolder && onUnarchiveTopic) {
+                      onUnarchiveTopic(`Archive/${node._topicFolder}`)
+                    }
                   }}
+                  style={{ ...btnBase, color: '#86efac' }}
+                  onMouseEnter={e => e.currentTarget.style.background = 'rgba(134,239,172,0.08)'}
+                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                >↩ Restore</button>
+              )}
+              {!node._archived && node.isTheme && !node.isJournal && !node.isTag && onArchiveTopic && (
+                <button
+                  onClick={() => { setCtxMenu(null); onArchiveTopic(node._topicFolder) }}
                   style={{ ...btnBase, color: 'var(--text-muted)' }}
                   onMouseEnter={e => e.currentTarget.style.background = 'var(--glass-bg-strong)'}
                   onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
                 >Archive topic</button>
+              )}
+              {!node._archived && !node.isTheme && !node.isTag && !node.isJournal && file && onArchiveFile && (
+                <button
+                  onClick={() => { setCtxMenu(null); onArchiveFile(file) }}
+                  style={{ ...btnBase, color: 'var(--text-muted)' }}
+                  onMouseEnter={e => e.currentTarget.style.background = 'var(--glass-bg-strong)'}
+                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                >Archive note</button>
               )}
 
               {/* Separator before delete */}
@@ -1264,6 +1303,51 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
 
         {/* No backdrop — closing is handled by document mousedown listener above */}
       </div>
+
+      {/* In-app confirm modal — replaces native OS dialog */}
+      {confirmModal && (
+        <div
+          className="absolute inset-0 flex items-center justify-center"
+          style={{ zIndex: 100, background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(4px)' }}
+        >
+          <div
+            className="flex flex-col gap-4 rounded-xl px-6 py-5"
+            style={{
+              background: 'var(--glass-bg-strong)',
+              border: '1px solid var(--glass-border-strong)',
+              boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
+              backdropFilter: 'blur(20px)',
+              WebkitBackdropFilter: 'blur(20px)',
+              minWidth: 300, maxWidth: 400,
+            }}
+          >
+            <div className="flex flex-col gap-1.5">
+              <span className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                {confirmModal.title}
+              </span>
+              <span className="text-xs leading-relaxed" style={{ color: 'var(--text-muted)', whiteSpace: 'pre-line' }}>
+                {confirmModal.message}
+              </span>
+            </div>
+            <div className="flex items-center justify-end gap-2">
+              <button
+                onClick={() => { setConfirmModal(null); confirmResolveRef.current?.(false) }}
+                className="px-3 py-1.5 rounded-md text-xs transition-all duration-150"
+                style={{ background: 'transparent', border: '1px solid var(--glass-border)', color: 'var(--text-muted)' }}
+                onMouseEnter={e => { e.currentTarget.style.color = 'var(--text-primary)'; e.currentTarget.style.background = 'var(--glass-bg)' }}
+                onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.background = 'transparent' }}
+              >Cancel</button>
+              <button
+                onClick={() => { setConfirmModal(null); confirmResolveRef.current?.(true) }}
+                className="px-3 py-1.5 rounded-md text-xs font-medium transition-all duration-150"
+                style={{ background: 'var(--accent-gradient)', color: '#fff', border: '1px solid transparent', boxShadow: '0 1px 6px var(--accent-glow)' }}
+                onMouseEnter={e => e.currentTarget.style.opacity = '0.88'}
+                onMouseLeave={e => e.currentTarget.style.opacity = '1'}
+              >Confirm</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

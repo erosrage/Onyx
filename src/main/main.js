@@ -297,7 +297,7 @@ ipcMain.handle('spaceGroup:listSpaces', async (_, groupPath) => {
   try {
     const entries = await fsPromises.readdir(groupPath, { withFileTypes: true })
     const spaces = entries
-      .filter(e => e.isDirectory() && !e.name.startsWith('.') && !e.name.startsWith('_'))
+      .filter(e => e.isDirectory() && !e.name.startsWith('.') && !e.name.startsWith('_') && e.name !== 'Archive')
       .map(e => ({ name: e.name, path: path.join(groupPath, e.name) }))
       .sort((a, b) => a.name.localeCompare(b.name))
     return { success: true, spaces }

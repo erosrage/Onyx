@@ -76,57 +76,6 @@ export default function VaultPicker({ theme, onSetTheme, spaceGroups = [], onAdd
       <div className="absolute bottom-1/4 right-1/4 w-80 h-80 rounded-full blur-[100px] pointer-events-none"
         style={{ background: 'var(--orb-secondary)' }}/>
 
-      {/* Theme toggle — top right */}
-      <div className="absolute top-4 right-4" style={{ zIndex: 20 }}>
-        <div className="flex p-0.5 rounded-lg"
-          style={{ background: 'var(--glass-bg-strong)', border: '1px solid var(--glass-border)', backdropFilter: 'blur(8px)' }}
-        >
-          {[{t:'dark',ic:<IcMoon/>},{t:'light',ic:<IcSun/>}].map(({t,ic})=>(
-            <button key={t} onClick={() => { onSetTheme(t); setShowThemePicker(false) }}
-              className="flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium tracking-wide transition-all duration-150 capitalize"
-              style={theme===t
-                ? {background:'var(--accent-gradient)',color:'#fff',boxShadow:'0 1px 4px var(--accent-glow)'}
-                : {color:'var(--text-muted)'}}
-              onMouseEnter={e=>{if(theme!==t)e.currentTarget.style.color='var(--text-primary)'}}
-              onMouseLeave={e=>{if(theme!==t)e.currentTarget.style.color='var(--text-muted)'}}
-            >{ic}{t}</button>
-          ))}
-          <button
-            onClick={() => setShowThemePicker(s => !s)}
-            className="flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium tracking-wide transition-all duration-150"
-            style={isCustom || showThemePicker
-              ? {background:'var(--accent-gradient)',color:'#fff',boxShadow:'0 1px 4px var(--accent-glow)'}
-              : {color:'var(--text-muted)'}}
-            onMouseEnter={e=>{if(!isCustom && !showThemePicker)e.currentTarget.style.color='var(--text-primary)'}}
-            onMouseLeave={e=>{if(!isCustom && !showThemePicker)e.currentTarget.style.color='var(--text-muted)'}}
-            title="Custom themes"
-          ><IcPalette/>custom</button>
-        </div>
-
-        {showThemePicker && (
-          <div className="absolute right-0 mt-1.5 p-2 rounded-xl"
-            style={{ background: 'var(--glass-bg-strong)', border: '1px solid var(--glass-border)', backdropFilter: 'blur(16px)', boxShadow: '0 8px 24px rgba(0,0,0,0.25)', width: 216 }}
-          >
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6 }}>
-              {CUSTOM_THEMES.map(ct => (
-                <button key={ct.id} onClick={() => { onSetTheme(ct.id); setShowThemePicker(false) }}
-                  title={ct.label}
-                  className="flex flex-col items-center gap-1 p-1.5 rounded-lg transition-all duration-150"
-                  style={{ background: theme===ct.id ? 'var(--accent-light)' : 'transparent', border: theme===ct.id ? '1px solid var(--accent-glow)' : '1px solid transparent' }}
-                  onMouseEnter={e => { if(theme!==ct.id) e.currentTarget.style.background='var(--glass-bg)' }}
-                  onMouseLeave={e => { if(theme!==ct.id) e.currentTarget.style.background='transparent' }}
-                >
-                  <div style={{ width: 28, height: 28, borderRadius: 8, overflow: 'hidden', border: '1px solid rgba(255,255,255,0.12)' }}>
-                    <div style={{ background: ct.bg, width: '100%', height: '57%' }} />
-                    <div style={{ background: ct.accent, width: '100%', height: '43%' }} />
-                  </div>
-                  <span style={{ fontSize: 9, color: 'var(--text-muted)', lineHeight: 1.2, textAlign: 'center' }}>{ct.label}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
 
       {/* Glass card */}
       <div className="flex flex-col items-center gap-6 p-10 rounded-2xl w-full mx-4 relative"

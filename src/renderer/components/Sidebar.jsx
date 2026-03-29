@@ -1,9 +1,42 @@
-import React, { useState, useCallback, useMemo, useEffect } from 'react'
+import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react'
 import JournalSection from './JournalSection'
 
 // ── SVG Icons ────────────────────────────────────────────────────────────────
 const IcFolder  = () => <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
-const IcSwap    = () => <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 014-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 01-4 4H3"/></svg>
+const IcSwap    = ({ color = '#2dd4bf' }) => (
+  <svg viewBox="0 0 16 16" width="16" height="16" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <radialGradient id="ss-corona" cx="50%" cy="50%" r="50%">
+        <stop offset="0%"   stopColor={color} stopOpacity="0.45"/>
+        <stop offset="55%"  stopColor={color} stopOpacity="0.10"/>
+        <stop offset="100%" stopColor={color} stopOpacity="0"/>
+      </radialGradient>
+      <radialGradient id="ss-body" cx="50%" cy="50%" r="50%">
+        <stop offset="0%"   stopColor="#ffffff" stopOpacity="1"/>
+        <stop offset="18%"  stopColor={color} stopOpacity="0.95"/>
+        <stop offset="62%"  stopColor={color} stopOpacity="0.52"/>
+        <stop offset="100%" stopColor={color} stopOpacity="0"/>
+      </radialGradient>
+      <radialGradient id="ss-core" cx="50%" cy="50%" r="50%">
+        <stop offset="0%"   stopColor="#ffffff" stopOpacity="1"/>
+        <stop offset="100%" stopColor="#ffffff" stopOpacity="0"/>
+      </radialGradient>
+      <filter id="ss-glow" x="-50%" y="-50%" width="200%" height="200%">
+        <feGaussianBlur stdDeviation="0.8" result="b"/>
+        <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+      </filter>
+    </defs>
+    <circle cx="8" cy="8" r="7.5" fill="url(#ss-corona)"/>
+    <g stroke={color} strokeOpacity="0.55" strokeWidth="0.45" filter="url(#ss-glow)">
+      <line x1="8" y1="1.5" x2="8" y2="14.5"/>
+      <line x1="1.5" y1="8" x2="14.5" y2="8"/>
+      <line x1="3.2" y1="3.2" x2="12.8" y2="12.8"/>
+      <line x1="12.8" y1="3.2" x2="3.2" y2="12.8"/>
+    </g>
+    <circle cx="8" cy="8" r="3.2" fill="url(#ss-body)"/>
+    <circle cx="8" cy="8" r="0.9" fill="url(#ss-core)"/>
+  </svg>
+)
 const IcSun     = () => <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
 const IcMoon    = () => <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
 const IcFile    = () => <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
@@ -13,6 +46,7 @@ const IcCalendar= () => <svg viewBox="0 0 24 24" width="12" height="12" fill="no
 const IcRefresh   = () => <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>
 const IcWhiteboard= () => <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
 const IcKanban   = () => <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="5" height="18" rx="1"/><rect x="9.5" y="3" width="5" height="12" rx="1"/><rect x="16" y="3" width="5" height="8" rx="1"/></svg>
+const IcExplorer = () => <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3h4l2 3h12a1 1 0 011 1v11a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2z"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="12" y1="10" x2="12" y2="16"/></svg>
 const IcPalette  = () => <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="8" cy="14" r="1" fill="currentColor"/><circle cx="12" cy="9" r="1" fill="currentColor"/><circle cx="16" cy="14" r="1" fill="currentColor"/></svg>
 
 const CUSTOM_THEMES = [
@@ -293,8 +327,10 @@ function TreeNode({ node, depth, activeFile, onOpenFile, onContextMenu, onCreate
 export default function Sidebar({
   vaultPath, files, folders = [], activeFile, onOpenFile, onCreateFile, onDeleteFile, onDeleteTopic,
   onChangeVault, onRefresh, showGraph, onToggleGraph, showAI, onToggleAI,
-  showWhiteboard, onToggleWhiteboard, showKanban, onToggleKanban, showNotes, onShowNotes, theme, onSetTheme, onMoveFile,
-  onArchiveTopic, onUnarchiveTopic,
+  showWhiteboard, onToggleWhiteboard, showKanban, onToggleKanban,
+  showFileExplorer, onToggleFileExplorer,
+  showNotes, onShowNotes, theme, onSetTheme, onMoveFile,
+  onArchiveTopic, onUnarchiveTopic, onArchiveFile, revealFolder,
 }) {
   const [createMode, setCreateMode] = useState(null)
   const [newThemeName, setNewThemeName] = useState('')
@@ -302,6 +338,13 @@ export default function Sidebar({
   const [selectedTheme, setSelectedTheme] = useState('')
   const [contextMenu, setContextMenu] = useState(null)
   const [archiveOpen, setArchiveOpen] = useState(false)
+  const [confirmModal, setConfirmModal] = useState(null)
+  const confirmResolveRef = useRef(null)
+  const showConfirmRef = useRef(null)
+  showConfirmRef.current = (title, message) => new Promise(resolve => {
+    confirmResolveRef.current = resolve
+    setConfirmModal({ title, message })
+  })
   const [search, setSearch] = useState('')
   const [collapsed, setCollapsed] = useState({})
   const [noteOrder, setNoteOrder] = useState(() => {
@@ -311,21 +354,38 @@ export default function Sidebar({
   const [dragging, setDragging] = useState(null)
   const [draggingFile, setDraggingFile] = useState(null)
   const [refreshing, setRefreshing] = useState(false)
-  const [showThemePicker, setShowThemePicker] = useState(false)
   const [recentFiles, setRecentFiles] = useState(() => {
     try { return JSON.parse(localStorage.getItem('onyx-recent-files') || '[]') } catch { return [] }
   })
+  const [recentExpanded, setRecentExpanded] = useState(false)
   // Track recently opened files
   useEffect(() => {
     if (!activeFile) return
     setRecentFiles(prev => {
       const entry = { path: activeFile.path, name: activeFile.name, folder: activeFile.folder }
       const filtered = prev.filter(r => r.path !== activeFile.path)
-      const next = [entry, ...filtered].slice(0, 4)
+      const next = [entry, ...filtered].slice(0, 8)
       localStorage.setItem('onyx-recent-files', JSON.stringify(next))
       return next
     })
   }, [activeFile])
+
+  // Auto-expand ancestor folders when a file is opened (e.g. from Home View click)
+  useEffect(() => {
+    if (!activeFile?.folder || activeFile.folder === '' || activeFile.folder === 'Journal') return
+    const parts = activeFile.folder.split('/')
+    setCollapsed(prev => {
+      const next = { ...prev }
+      parts.forEach((_, i) => { next[`__tree_${parts.slice(0, i + 1).join('/')}`] = false })
+      return next
+    })
+  }, [activeFile?.path])
+
+  // Expand a folder by name (for topic nodes with no root file)
+  useEffect(() => {
+    if (!revealFolder?.folder) return
+    setCollapsed(prev => ({ ...prev, [`__tree_${revealFolder.folder}`]: false }))
+  }, [revealFolder])
 
   const vaultName = vaultPath ? vaultPath.split(/[\\/]/).pop() : 'Space'
 
@@ -471,16 +531,14 @@ export default function Sidebar({
   }, [contextMenu, onDeleteFile, onDeleteTopic])
 
   const handleArchive = useCallback(async () => {
-    if (!contextMenu || !onArchiveTopic) return
-    const topicFolder = contextMenu.folder || contextMenu.file?.folder?.split('/')[0] || null
-    if (!topicFolder) return
-    const ok = await window.electronAPI.confirmDialog(
-      `Archive "${topicFolder}"?`,
-      `This will move "${topicFolder}" and all its notes to the Archive folder.`
-    )
-    if (ok) await onArchiveTopic(topicFolder)
+    if (!contextMenu) return
+    if (contextMenu.folder && onArchiveTopic) {
+      await onArchiveTopic(contextMenu.folder.split('/')[0])
+    } else if (contextMenu.file && onArchiveFile) {
+      await onArchiveFile(contextMenu.file)
+    }
     setContextMenu(null)
-  }, [contextMenu, onArchiveTopic])
+  }, [contextMenu, onArchiveTopic, onArchiveFile])
 
   const handleRenameFolder = useCallback(async (folder, oldName, newName) => {
     setRenamingFolder(null)
@@ -539,79 +597,11 @@ export default function Sidebar({
       {/* Vault header */}
       <div className="flex items-center justify-between px-3 py-2.5" style={{ borderBottom: '1px solid var(--glass-border)' }}>
         <div className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
-          {/* Current-space star dot — click to open galaxy view */}
-          <button
-            onClick={onChangeVault}
-            title="Galaxy view — switch space"
-            style={{
-              flexShrink:0, width:14, height:14, borderRadius:'50%', border:'none', padding:0, cursor:'pointer',
-              background:`radial-gradient(circle at 32% 32%, ${spaceColor(vaultName)} 0%, ${spaceColor(vaultName)}88 55%, ${spaceColor(vaultName)}22 100%)`,
-              boxShadow:`0 0 5px ${spaceColor(vaultName)}99, 0 0 10px ${spaceColor(vaultName)}44`,
-              transition:'transform 0.2s ease, box-shadow 0.2s ease',
-            }}
-            onMouseEnter={e => {
-              e.currentTarget.style.transform='scale(1.45)'
-              e.currentTarget.style.boxShadow=`0 0 9px ${spaceColor(vaultName)}, 0 0 18px ${spaceColor(vaultName)}66`
-            }}
-            onMouseLeave={e => {
-              e.currentTarget.style.transform='scale(1)'
-              e.currentTarget.style.boxShadow=`0 0 5px ${spaceColor(vaultName)}99, 0 0 10px ${spaceColor(vaultName)}44`
-            }}
-          />
           <span className="text-sm font-semibold truncate tracking-tight" style={{ color: 'var(--text-primary)' }} title={vaultPath}>
             {vaultName}
           </span>
         </div>
         <div className="flex items-center gap-1.5 flex-shrink-0">
-          {/* Dark / Light / Custom segmented control */}
-          <div className="relative">
-            <div className="flex p-0.5 rounded-lg" style={{ background: 'var(--input-bg)', border: '1px solid var(--glass-border)' }}>
-              {[{t:'dark',ic:<IcMoon/>,title:'Dark theme'},{t:'light',ic:<IcSun/>,title:'Light theme'}].map(({t,ic,title})=>(
-                <button key={t} onClick={() => { onSetTheme(t); setShowThemePicker(false) }}
-                  title={title}
-                  className="flex items-center justify-center w-6 h-6 rounded-md transition-all duration-150"
-                  style={theme===t
-                    ? {background:'var(--accent-gradient)',color:'#fff',boxShadow:'0 1px 4px var(--accent-glow)'}
-                    : {color:'var(--text-muted)'}}
-                  onMouseEnter={e => { if(theme!==t) e.currentTarget.style.color='var(--text-primary)' }}
-                  onMouseLeave={e => { if(theme!==t) e.currentTarget.style.color='var(--text-muted)' }}
-                >{ic}</button>
-              ))}
-              <button
-                onClick={() => setShowThemePicker(s => !s)}
-                className="flex items-center justify-center w-6 h-6 rounded-md transition-all duration-150"
-                style={CUSTOM_THEME_IDS.has(theme) || showThemePicker
-                  ? {background:'var(--accent-gradient)',color:'#fff',boxShadow:'0 1px 4px var(--accent-glow)'}
-                  : {color:'var(--text-muted)'}}
-                onMouseEnter={e => { if(!CUSTOM_THEME_IDS.has(theme) && !showThemePicker) e.currentTarget.style.color='var(--text-primary)' }}
-                onMouseLeave={e => { if(!CUSTOM_THEME_IDS.has(theme) && !showThemePicker) e.currentTarget.style.color='var(--text-muted)' }}
-                title="Custom themes"
-              ><IcPalette/></button>
-            </div>
-            {showThemePicker && (
-              <div className="absolute right-0 top-full mt-1.5 z-50 p-2 rounded-xl"
-                style={{ background: 'var(--glass-bg-strong)', border: '1px solid var(--glass-border)', backdropFilter: 'blur(16px)', boxShadow: '0 8px 24px rgba(0,0,0,0.25)', width: 196 }}
-              >
-                <div className="grid grid-cols-4 gap-1.5">
-                  {CUSTOM_THEMES.map(ct => (
-                    <button key={ct.id} onClick={() => { onSetTheme(ct.id); setShowThemePicker(false) }}
-                      title={ct.label}
-                      className="flex flex-col items-center gap-1 p-1.5 rounded-lg transition-all duration-150"
-                      style={{ background: theme===ct.id ? 'var(--accent-light)' : 'transparent', border: theme===ct.id ? '1px solid var(--accent-glow)' : '1px solid transparent' }}
-                      onMouseEnter={e => { if(theme!==ct.id) e.currentTarget.style.background='var(--glass-bg)' }}
-                      onMouseLeave={e => { if(theme!==ct.id) e.currentTarget.style.background='transparent' }}
-                    >
-                      <div className="w-7 h-7 rounded-lg overflow-hidden flex-shrink-0" style={{ border: '1px solid rgba(255,255,255,0.12)' }}>
-                        <div style={{ background: ct.bg, width: '100%', height: '57%' }} />
-                        <div style={{ background: ct.accent, width: '100%', height: '43%' }} />
-                      </div>
-                      <span className="text-[9px] leading-tight text-center" style={{ color: 'var(--text-muted)' }}>{ct.label}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
           <button
             onClick={async () => { setRefreshing(true); await onRefresh(); setRefreshing(false) }}
             title="Refresh file list"
@@ -625,11 +615,11 @@ export default function Sidebar({
             </span>
           </button>
           <button onClick={onChangeVault} title="Switch Space"
-            className="flex items-center justify-center w-6 h-6 rounded-md transition-all duration-150"
-            style={{ color: 'var(--text-muted)', border: '1px solid transparent' }}
-            onMouseEnter={e => { e.currentTarget.style.color='var(--text-primary)'; e.currentTarget.style.background='var(--glass-bg-strong)' }}
-            onMouseLeave={e => { e.currentTarget.style.color='var(--text-muted)'; e.currentTarget.style.background='transparent' }}
-          ><IcSwap/></button>
+            className="flex items-center justify-center w-6 h-6 rounded-full transition-all duration-200"
+            style={{ background: 'transparent', border: 'none', opacity: 0.75 }}
+            onMouseEnter={e => { e.currentTarget.style.opacity = '1'; e.currentTarget.style.filter = `drop-shadow(0 0 4px ${spaceColor(vaultName)}cc)` }}
+            onMouseLeave={e => { e.currentTarget.style.opacity = '0.75'; e.currentTarget.style.filter = 'none' }}
+          ><IcSwap color={spaceColor(vaultName)}/></button>
         </div>
       </div>
 
@@ -656,32 +646,13 @@ export default function Sidebar({
             {journalFiles.length > 0 && (
               <JournalSection journalFiles={journalFiles} activeFile={activeFile} onOpenFile={onOpenFile}
                 onCreateFile={onCreateFile} collapsed={collapsed} toggleCollapse={toggleCollapse} search={search}
-                onContextMenu={handleContextMenu}
+                onContextMenu={handleContextMenu} onTodayJournal={handleCreateJournal}
               />
             )}
 
-            {/* Create bar */}
+            {/* Create bar — forms only */}
+            {createMode !== null && (
             <div className="px-2 py-2 flex flex-col gap-1.5" style={{ borderBottom: '1px solid var(--glass-border)' }}>
-              {createMode === null && (
-                <div className="flex gap-1">
-                  {[{label:'+ Topic',mode:'theme',title:'New topic'},{label:'+ Note',mode:'note',title:'New note'}].map(btn=>(
-                    <button key={btn.mode}
-                      onClick={() => { setCreateMode(btn.mode); if(btn.mode==='note' && !activeFile) setSelectedTheme(topicNames[0]||'') }}
-                      title={btn.title}
-                      className="flex-1 text-xs px-1.5 py-1.5 rounded-md transition-all duration-150 text-center"
-                      style={{ color:'var(--text-muted)', border:'1px solid var(--glass-border)' }}
-                      onMouseEnter={e => { e.currentTarget.style.background='var(--glass-bg-strong)'; e.currentTarget.style.color='var(--text-primary)' }}
-                      onMouseLeave={e => { e.currentTarget.style.background='transparent'; e.currentTarget.style.color='var(--text-muted)' }}
-                    >{btn.label}</button>
-                  ))}
-                  <button onClick={handleCreateJournal} title="Open or create today's journal"
-                    className="flex-1 flex items-center justify-center gap-1 text-xs px-1.5 py-1.5 rounded-md transition-all duration-150"
-                    style={{ color:'var(--text-muted)', border:'1px solid var(--glass-border)' }}
-                    onMouseEnter={e => { e.currentTarget.style.background='var(--glass-bg-strong)'; e.currentTarget.style.color='var(--accent-text)' }}
-                    onMouseLeave={e => { e.currentTarget.style.background='transparent'; e.currentTarget.style.color='var(--text-muted)' }}
-                  ><IcCalendar/>Today</button>
-                </div>
-              )}
               {createMode === 'theme' && (
                 <form onSubmit={handleCreateTheme} className="flex flex-col gap-1.5">
                   <span className="text-[10px] uppercase tracking-widest font-semibold" style={{ color:'var(--text-muted)' }}>New Topic</span>
@@ -727,23 +698,34 @@ export default function Sidebar({
                 </form>
               )}
             </div>
+            )}
 
             {/* Notes section header */}
-            {visibleNodes.length > 0 && (
-              <div className="px-3 pt-2 pb-1 flex items-center gap-2">
-                <button
-                  onClick={toggleAllCollapse}
-                  title={allCollapsed ? 'Expand all' : 'Collapse all'}
-                  className="text-[10px] uppercase tracking-widest font-semibold transition-colors duration-150"
-                  style={{ color: 'var(--accent-text)', background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}
-                  onMouseEnter={e => e.currentTarget.style.color = '#c4b5fd'}
-                  onMouseLeave={e => e.currentTarget.style.color = 'var(--accent-text)'}
-                >
-                  Topics
-                </button>
-                <span className="text-[9px] opacity-40" style={{ color:'var(--text-dim)' }}>drag to reorder · drag notes to topics</span>
+            <div className="px-3 pt-2 pb-1 flex items-center gap-2">
+              <button
+                onClick={toggleAllCollapse}
+                title={allCollapsed ? 'Expand all' : 'Collapse all'}
+                className="text-[10px] uppercase tracking-widest font-semibold transition-colors duration-150"
+                style={{ color: 'var(--accent-text)', background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}
+                onMouseEnter={e => e.currentTarget.style.color = '#c4b5fd'}
+                onMouseLeave={e => e.currentTarget.style.color = 'var(--accent-text)'}
+              >
+                Topics
+              </button>
+
+              <div className="ml-auto flex gap-1">
+                {[{label:'+ Topic',mode:'theme',title:'New topic'},{label:'+ Note',mode:'note',title:'New note'}].map(btn=>(
+                  <button key={btn.mode}
+                    onClick={() => { setCreateMode(btn.mode); if(btn.mode==='note' && !activeFile) setSelectedTheme(topicNames[0]||'') }}
+                    title={btn.title}
+                    className="text-[10px] px-1.5 py-0.5 rounded transition-all duration-150"
+                    style={{ color:'var(--text-muted)', border:'1px solid var(--glass-border)', background:'transparent' }}
+                    onMouseEnter={e => { e.currentTarget.style.background='var(--glass-bg-strong)'; e.currentTarget.style.color='var(--text-primary)' }}
+                    onMouseLeave={e => { e.currentTarget.style.background='transparent'; e.currentTarget.style.color='var(--text-muted)' }}
+                  >{btn.label}</button>
+                ))}
               </div>
-            )}
+            </div>
 
             {visibleNodes.length === 0 && visibleOrphans.length === 0 && journalFiles.length === 0 && q ? (
               <div className="px-4 py-4 text-center">
@@ -816,8 +798,8 @@ export default function Sidebar({
               className="w-full flex items-center gap-2 px-3 pt-2 pb-1 text-left"
               style={{ background: 'none', border: 'none', cursor: 'pointer' }}
             >
-              <span className="text-[10px] uppercase tracking-widest font-semibold" style={{ color: 'var(--text-dim)' }}>
-                {archiveOpen ? '▾' : '▸'} Archived ({archivedTopics.length})
+              <span className="text-[10px] uppercase tracking-widest font-semibold" style={{ color: 'var(--accent-text)' }}>
+                {archiveOpen ? '▾' : '▸'} Archived ({archivedTopics.length} topic{archivedTopics.length !== 1 ? 's' : ''} · {archiveFiles.length} note{archiveFiles.length !== 1 ? 's' : ''})
               </span>
             </button>
             {archiveOpen && archivedTopics.map(topicName => {
@@ -831,9 +813,7 @@ export default function Sidebar({
                     onContextMenu={e => {
                       e.preventDefault(); e.stopPropagation()
                       if (onUnarchiveTopic) {
-                        // inline unarchive via confirm
-                        window.electronAPI.confirmDialog(`Restore "${topicName}"?`, `This will move "${topicName}" back to your space.`)
-                          .then(ok => { if (ok) onUnarchiveTopic(`Archive/${topicName}`) })
+                        onUnarchiveTopic(`Archive/${topicName}`)
                       }
                     }}
                     onClick={() => rootFile && onOpenFile(rootFile)}
@@ -845,10 +825,9 @@ export default function Sidebar({
                     <span className="text-xs truncate flex-1">{topicName}</span>
                     {onUnarchiveTopic && (
                       <button
-                        onClick={async e => {
+                        onClick={e => {
                           e.stopPropagation()
-                          const ok = await window.electronAPI.confirmDialog(`Restore "${topicName}"?`, `This will move "${topicName}" back to your space.`)
-                          if (ok) onUnarchiveTopic(`Archive/${topicName}`)
+                          onUnarchiveTopic(`Archive/${topicName}`)
                         }}
                         className="text-[9px] px-1.5 py-0.5 rounded transition-all duration-150 flex-shrink-0"
                         style={{ color: 'var(--accent-text)', background: 'var(--accent-light)', border: '1px solid var(--glass-border)' }}
@@ -867,10 +846,21 @@ export default function Sidebar({
       {/* Recent Files */}
       {recentFiles.length > 0 && (
         <div style={{ borderTop: '1px solid var(--glass-border)', flexShrink: 0 }}>
-          <div className="px-3 pt-2 pb-1 flex items-center justify-between">
-            <span className="text-[10px] uppercase tracking-widest font-semibold" style={{ color: 'var(--text-dim)' }}>Recent</span>
+          <div className="px-3 pt-2 pb-1 flex items-center gap-2">
+            <button
+              onClick={() => setRecentExpanded(v => !v)}
+              className="text-[10px] uppercase tracking-widest font-semibold transition-colors duration-150"
+              style={{ color: 'var(--accent-text)', background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}
+              onMouseEnter={e => e.currentTarget.style.color = '#c4b5fd'}
+              onMouseLeave={e => e.currentTarget.style.color = 'var(--accent-text)'}
+            >
+              Recent
+            </button>
+            <span className="text-[9px] font-mono ml-auto" style={{ color: 'var(--text-dim)' }}>
+              {recentFiles.filter(r => files.find(f => f.path === r.path)).length}
+            </span>
           </div>
-          {recentFiles.map(r => {
+          {recentExpanded && recentFiles.map(r => {
             const isActive = activeFile?.path === r.path
             const liveFile = files.find(f => f.path === r.path)
             if (!liveFile) return null  // file deleted from vault
@@ -904,11 +894,12 @@ export default function Sidebar({
         </span>
         <div className="flex items-center gap-1">
           {[
-            {ic:<IcGraph/>,       act:showGraph,       fn:onToggleGraph,      t:'Graph view'},
-            {ic:<IcFile/>,        act:showNotes,       fn:onShowNotes,        t:'Notes view'},
-            {ic:<IcKanban/>,      act:showKanban,      fn:onToggleKanban,     t:'Kanban board'},
-            {ic:<IcWhiteboard/>,  act:showWhiteboard,  fn:onToggleWhiteboard, t:'Whiteboard'},
-            {ic:<IcAI/>,          act:showAI,          fn:onToggleAI,         t:'AI Harness'},
+            {ic:<IcGraph/>,       act:showGraph,       fn:onToggleGraph,      t:'Home Panel'},
+            {ic:<IcFile/>,        act:showNotes,       fn:onShowNotes,        t:'Notes Panel'},
+            {ic:<IcAI/>,          act:showAI,          fn:onToggleAI,         t:'Context Panel'},
+            {ic:<IcWhiteboard/>,  act:showWhiteboard,  fn:onToggleWhiteboard, t:'Whiteboard Panel'},
+            {ic:<IcKanban/>,      act:showKanban,      fn:onToggleKanban,     t:'Kanban Panel'},
+            {ic:<IcExplorer/>,    act:showFileExplorer,fn:onToggleFileExplorer,t:'File Explorer'},
           ].map(({ic,act,fn,t})=>(
             <button key={t} onClick={fn} title={t}
               className="flex items-center justify-center w-7 h-7 rounded-md transition-all duration-150"
@@ -938,14 +929,19 @@ export default function Sidebar({
               Rename
             </button>
           )}
-          {(contextMenu.folder || contextMenu.file?.folder) && onArchiveTopic && (
+          {contextMenu.folder && onArchiveTopic && (
             <button onClick={handleArchive} className="w-full text-left px-3 py-1.5 text-sm transition-colors"
               style={{ color: 'var(--text-muted)' }}
               onMouseEnter={e => e.currentTarget.style.background = 'var(--glass-bg-strong)'}
               onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
-            >
-              Archive{contextMenu.folder ? ' Topic' : ''}
-            </button>
+            >Archive Topic</button>
+          )}
+          {!contextMenu.folder && contextMenu.file && onArchiveFile && (
+            <button onClick={handleArchive} className="w-full text-left px-3 py-1.5 text-sm transition-colors"
+              style={{ color: 'var(--text-muted)' }}
+              onMouseEnter={e => e.currentTarget.style.background = 'var(--glass-bg-strong)'}
+              onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+            >Archive Note</button>
           )}
           {contextMenu.folder && (
             <button onClick={handleDelete} className="w-full text-left px-3 py-1.5 text-sm text-red-400 hover:text-red-300 hover:bg-red-500/10 transition-colors">
@@ -960,6 +956,50 @@ export default function Sidebar({
           <button onClick={() => setContextMenu(null)} className="w-full text-left px-3 py-1.5 text-sm transition-colors"
             style={{ color:'var(--text-muted)' }} onMouseEnter={e=>e.currentTarget.style.background='var(--glass-bg-strong)'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}
           >Cancel</button>
+        </div>
+      )}
+
+      {/* In-app confirm modal */}
+      {confirmModal && (
+        <div
+          className="absolute inset-0 flex items-center justify-center"
+          style={{ zIndex: 200, background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(4px)' }}
+        >
+          <div
+            className="flex flex-col gap-4 rounded-xl px-6 py-5 mx-3"
+            style={{
+              background: 'var(--glass-bg-strong)',
+              border: '1px solid var(--glass-border-strong)',
+              boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
+              backdropFilter: 'blur(20px)',
+              WebkitBackdropFilter: 'blur(20px)',
+            }}
+          >
+            <div className="flex flex-col gap-1.5">
+              <span className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                {confirmModal.title}
+              </span>
+              <span className="text-xs leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+                {confirmModal.message}
+              </span>
+            </div>
+            <div className="flex items-center justify-end gap-2">
+              <button
+                onClick={() => { setConfirmModal(null); confirmResolveRef.current?.(false) }}
+                className="px-3 py-1.5 rounded-md text-xs transition-all duration-150"
+                style={{ background: 'transparent', border: '1px solid var(--glass-border)', color: 'var(--text-muted)' }}
+                onMouseEnter={e => { e.currentTarget.style.color = 'var(--text-primary)'; e.currentTarget.style.background = 'var(--glass-bg)' }}
+                onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.background = 'transparent' }}
+              >Cancel</button>
+              <button
+                onClick={() => { setConfirmModal(null); confirmResolveRef.current?.(true) }}
+                className="px-3 py-1.5 rounded-md text-xs font-medium transition-all duration-150"
+                style={{ background: 'var(--accent-gradient)', color: '#fff', border: '1px solid transparent', boxShadow: '0 1px 6px var(--accent-glow)' }}
+                onMouseEnter={e => e.currentTarget.style.opacity = '0.88'}
+                onMouseLeave={e => e.currentTarget.style.opacity = '1'}
+              >Confirm</button>
+            </div>
+          </div>
         </div>
       )}
     </div>

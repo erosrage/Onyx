@@ -20,15 +20,22 @@ function hexRgb(hex) {
 function _wh(n) { n=(n^61)^(n>>>16); n*=9; n^=n>>>4; n*=0x27d4eb2d; n^=n>>>15; return (n>>>0) }
 
 // ─── Orbital tilt per space (decorative) ─────────────────────────────────────
-function orbitTilt(name) {
+// Returns 4 orbit configs seeded from the space name — each has unique radius,
+// ellipse flatness, rotation angle, speed, dot count, and opacity.
+function orbitRings(name) {
   let h = 0
-  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) & 0xffff
-  return {
-    ix: ((h % 80) - 40),
-    iy: (((h >> 4) % 60) - 30),
-    ox: -(((h >> 2) % 70) - 35),
-    oy: (((h >> 6) % 50) - 25),
-  }
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) & 0xfffff
+  const w = (n) => { n = (n ^ 61) ^ (n >>> 16); n *= 9; n ^= n >>> 4; n *= 0x27d4eb2d; n ^= n >>> 15; return (n >>> 0) }
+  return [0, 1, 2, 3].map(i => ({
+    radiusOffset: 14 + (w(h + i * 7)     % 28),        // 14–42 px beyond bodyR/2
+    flatness:     0.12 + (w(h + i * 13)  % 52) / 100,  // 0.12–0.64 scaleY compression
+    rotation:     (w(h + i * 19) % 6283) / 1000,       // 0–2π rotation
+    speed:        3.5 + (w(h + i * 31)   % 60) / 10,   // 3.5–9.5 s period
+    dots:         1 + (w(h + i * 41)     % 3),          // 1–3 dots per ring
+    alpha:        0.45 + (w(h + i * 53)  % 40) / 100,  // 0.45–0.85 opacity
+    dotR:         1.2 + (w(h + i * 61)   % 14) / 10,   // 1.2–2.6 dot radius
+    dir:          w(h + i * 71) % 2 === 0 ? 1 : -1,    // CW or CCW
+  }))
 }
 
 // ─── Background star field ────────────────────────────────────────────────────
@@ -43,50 +50,21 @@ const BG_STARS = Array.from({ length: 280 }, (_, i) => {
   return {
     x: Math.max(0.3, Math.min(99.7, x)) / 100,
     y: Math.max(0.3, Math.min(99.7, y)) / 100,
-    r:     0.3 + (hm % 22) / 14,
+    r:     0.06 + (hm % 7) / 24,
     delay: (_wh(i*5+4) % 3200) / 1000,
-    dur:   1.6 + (_wh(i*7+6) % 2400) / 1000,
-    op:    0.10 + (_wh(i*11+9) % 480) / 1800,
+    dur:   1.8 + (_wh(i*7+6) % 3000) / 1000,
+    op:    0.08 + (_wh(i*11+9) % 380) / 2000,
+    // drift params — Lissajous float
+    dax: ((_wh(i*17+10) % 800) - 400) / 400,
+    day: ((_wh(i*17+11) % 600) - 300) / 300,
+    dtx: 22 + (_wh(i*17+12) % 44),
+    dty: 20 + (_wh(i*17+13) % 40),
+    dpx: (_wh(i*17+14) % 6283) / 1000,
+    dpy: (_wh(i*17+15) % 6283) / 1000,
   }
 })
 
-// ─── Orphaned particles ───────────────────────────────────────────────────────
-const TINTS = ['255,255,255','147,197,253','196,181,253','134,239,172','251,191,36']
-const ORPHAN_NODES = Array.from({ length: 32 }, (_, i) => {
-  const s = (i + 17) * 9876541
-  return {
-    x:  5 + ((s*16807+23) % 90000) / 1000,
-    y:  8 + ((s*48271+11) % 84000) / 1000,
-    r:  1.2 + ((s*7919) % 18) / 10,
-    ax: 10 + ((s*2311) % 25), ay: 7  + ((s*3571) % 20),
-    tx: 9  + ((s*6101) % 14), ty: 8  + ((s*5381) % 12),
-    px: ((s*4999) % 8000) / 1000, py: ((s*4201) % 6000) / 1000,
-    op: 0.06 + ((s*9001) % 180) / 1500,
-    rgb: TINTS[((s*3137) % TINTS.length)],
-  }
-})
 
-// ─── Ghost (decorative) nodes ─────────────────────────────────────────────────
-const GHOST_COLORS = ['#f472b6','#c084fc','#60a5fa','#34d399','#fbbf24','#f87171','#a78bfa','#38bdf8','#e879f9','#fb923c']
-const GHOST_NODES = Array.from({ length: 14 }, (_, i) => {
-  const s = (i + 7) * 3456789
-  const angle = ((s*16807+3) % 628318) / 100000
-  const r     = 10 + ((s*48271) % 30)
-  return {
-    x:    Math.max(6,  Math.min(94, 50 + Math.cos(angle)*r*1.6)),
-    y:    Math.max(10, Math.min(90, 52 + Math.sin(angle)*r*0.9)),
-    z:    Math.sin(angle*2.618 + i*0.7) * 260,
-    color:   GHOST_COLORS[((s*3137) % GHOST_COLORS.length)],
-    size:    14 + ((s*7919) % 18),
-    hasRing: ((s*6101) % 3) !== 0,
-    ringR:   28 + ((s*5381) % 18),
-    ringTilt:(55 + i*13) * Math.PI / 180,
-    ax:10+((s*2311)%18), ay:8+((s*3571)%14), az:12+((s*5381)%20),
-    tx:13+((s*4999)%10), ty:11+((s*4201)%8),  tz:16+((s*6101)%12),
-    px:((s*2999)%7000)/1000, py:((s*3499)%5500)/1000, pz:((s*4001)%6000)/1000,
-    op: 0.22 + ((s*9001)%200) / 700,
-  }
-})
 
 // ─── Milky-way spiral layout ──────────────────────────────────────────────────
 function milkyWayPos(index, total) {
@@ -108,21 +86,29 @@ function milkyWayPos(index, total) {
   }
 }
 
-// ─── Random connections ───────────────────────────────────────────────────────
-function generateConnections(spaces) {
-  if (spaces.length < 2) return []
-  const edges = [], seen = new Set()
-  spaces.forEach((space, i) => {
-    let h = 0
-    for (let k = 0; k < space.name.length; k++) h = (h*31 + space.name.charCodeAt(k)) & 0xfffff
-    const numConns = 1 + (_wh(h) % 3)
-    for (let c = 0; c < numConns; c++) {
-      const j = (i + 1 + (_wh(h + c*997 + i*31) % (spaces.length - 1))) % spaces.length
-      const key = Math.min(i,j) + '-' + Math.max(i,j)
-      if (!seen.has(key)) { seen.add(key); edges.push([i, j]) }
-    }
-  })
-  return edges
+// ─── Per-node organic float parameters (seeded by name) ──────────────────────
+// Two-harmonic Lissajous-style drift: different x/y/z periods so motion never
+// exactly repeats. Amplitudes are in %-units for x/y and px for z.
+function floatParams(name) {
+  let h = 0
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) & 0xfffff
+  return {
+    ax:  1.6 + (_wh(h)      % 24) / 10,   // x amplitude  1.6–4 %
+    ay:  1.2 + (_wh(h+1)    % 20) / 10,   // y amplitude  1.2–3.2 %
+    az:  22  + (_wh(h+2)    % 38),         // z amplitude  22–60 px
+    ax2: 0.5 + (_wh(h+6)    % 14) / 10,   // 2nd harmonic x
+    ay2: 0.4 + (_wh(h+7)    % 12) / 10,   // 2nd harmonic y
+    tx:  6   + (_wh(h+3)    % 9),           // x period     6–15 s
+    ty:  5   + (_wh(h+4)    % 9),           // y period     5–14 s
+    tz:  8   + (_wh(h+5)    % 11),          // z period     8–19 s
+    tx2: 9   + (_wh(h+8)    % 12),          // 2nd x period
+    ty2: 10  + (_wh(h+9)    % 11),          // 2nd y period
+    px:  (_wh(h+10) % 6283) / 1000,        // x phase offset  0–2π
+    py:  (_wh(h+11) % 6283) / 1000,
+    pz:  (_wh(h+12) % 6283) / 1000,
+    px2: (_wh(h+13) % 6283) / 1000,
+    py2: (_wh(h+14) % 6283) / 1000,
+  }
 }
 
 // ─── 3-D → screen projection (mirrors CSS perspective-1000px transform) ──────
@@ -149,32 +135,47 @@ function project(nx, ny, nz, W, H, pan, tilt, zoom, fov = 1000) {
   }
 }
 
-// ─── Sphere shading on canvas ─────────────────────────────────────────────────
-function drawSphere(ctx, sx, sy, r, color) {
+
+// ─── Star-appearance node: corona + diffraction spikes + hot core ────────────
+// rotPhase gives each node a unique starting angle so they don't all spin in sync.
+function drawStarNode(ctx, sx, sy, color, t) {
   const [cr, cg, cb] = hexRgb(color)
-  // Base fill
-  ctx.beginPath(); ctx.arc(sx, sy, r, 0, Math.PI * 2)
-  ctx.fillStyle = color; ctx.fill()
-  // Diffuse shading: highlights upper-left, darkens lower-right rim
-  const sheen = ctx.createRadialGradient(sx - r*0.34, sy - r*0.34, 0, sx, sy, r)
-  sheen.addColorStop(0,    'rgba(255,255,255,0.38)')
-  sheen.addColorStop(0.45, 'rgba(255,255,255,0.08)')
-  sheen.addColorStop(1,    'rgba(0,0,0,0.42)')
-  ctx.beginPath(); ctx.arc(sx, sy, r, 0, Math.PI * 2)
-  ctx.fillStyle = sheen; ctx.fill()
-  // Specular highlight — tight white dot upper-left
-  const spec = ctx.createRadialGradient(sx - r*0.30, sy - r*0.28, 0, sx - r*0.30, sy - r*0.28, r*0.18)
-  spec.addColorStop(0, 'rgba(255,255,255,0.90)')
-  spec.addColorStop(1, 'rgba(255,255,255,0)')
-  ctx.beginPath(); ctx.arc(sx, sy, r, 0, Math.PI * 2)
-  ctx.fillStyle = spec; ctx.fill()
-  // Inward dark rim — enhances curvature at the edge
-  const rim = ctx.createRadialGradient(sx, sy, r*0.78, sx, sy, r)
-  rim.addColorStop(0, 'rgba(0,0,0,0)')
-  rim.addColorStop(1, 'rgba(0,0,0,0.28)')
-  ctx.beginPath(); ctx.arc(sx, sy, r, 0, Math.PI * 2)
-  ctx.fillStyle = rim; ctx.fill()
-  return [cr, cg, cb]
+  const pulse  = 1 + Math.sin(t * 1.4) * 0.18
+  const starR  = 10 * pulse
+
+  // Corona — single radial gradient extending to starR × 6
+  const corona = ctx.createRadialGradient(sx, sy, 0, sx, sy, starR * 6)
+  corona.addColorStop(0,   `rgba(${cr},${cg},${cb},0.38)`)
+  corona.addColorStop(0.3, `rgba(${cr},${cg},${cb},0.14)`)
+  corona.addColorStop(1,   `rgba(${cr},${cg},${cb},0)`)
+  ctx.beginPath(); ctx.arc(sx, sy, starR * 6, 0, Math.PI * 2)
+  ctx.fillStyle = corona; ctx.fill()
+
+  // 8-point polygon star (16 vertices alternating outer/inner)
+  ctx.save()
+  ctx.translate(sx, sy)
+  ctx.rotate(t * 0.22)
+  ctx.beginPath()
+  for (let i = 0; i < 16; i++) {
+    const a = (i / 16) * Math.PI * 2 - Math.PI / 2
+    const r = i % 2 === 0 ? starR : starR * 0.38
+    i === 0 ? ctx.moveTo(Math.cos(a) * r, Math.sin(a) * r)
+            : ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r)
+  }
+  ctx.closePath()
+  ctx.fillStyle = `rgba(${cr},${cg},${cb},0.92)`
+  ctx.shadowColor = `rgba(${cr},${cg},${cb},0.8)`
+  ctx.shadowBlur = 8
+  ctx.fill()
+  ctx.shadowBlur = 0
+  ctx.restore()
+
+  // White-hot core pinpoint
+  const core = ctx.createRadialGradient(sx, sy, 0, sx, sy, starR * 0.28)
+  core.addColorStop(0, 'rgba(255,255,255,1)')
+  core.addColorStop(1, 'rgba(255,255,255,0)')
+  ctx.beginPath(); ctx.arc(sx, sy, starR * 0.28, 0, Math.PI * 2)
+  ctx.fillStyle = core; ctx.fill()
 }
 
 const BH_R = 32
@@ -202,8 +203,11 @@ export default function GalaxyView({ spaceGroups, currentSpacePath, onSelectSpac
   const hoveredRef      = useRef(null)
   const flyingToRef     = useRef(null)
   const spacesRef       = useRef([])
-  const connectionsRef  = useRef([])
-  const rafRef          = useRef(null)
+  const rafRef           = useRef(null)
+  const timeRef          = useRef(0)
+  const prevTsRef        = useRef(null)
+  const shootingStarsRef = useRef([])
+  const nextShootRef     = useRef(2 + Math.random() * 5) // seconds until next spawn
 
   useEffect(() => { spacesRef.current = spaces }, [spaces])
   useEffect(() => { flyingToRef.current = flyingTo }, [flyingTo])
@@ -252,9 +256,6 @@ export default function GalaxyView({ spaceGroups, currentSpacePath, onSelectSpac
     return () => { cancelled = true }
   }, [spaceGroups, currentSpacePath])
 
-  // Recompute connections when spaces change
-  useEffect(() => { connectionsRef.current = generateConnections(spaces) }, [spaces])
-
   // ── Spread animation ─────────────────────────────────────────────────────
   const animateSpread = useCallback((target) => {
     if (spreadAnimRef.current) cancelAnimationFrame(spreadAnimRef.current)
@@ -273,14 +274,22 @@ export default function GalaxyView({ spaceGroups, currentSpacePath, onSelectSpac
   const handleGravity     = useCallback(() => animateSpread(0.18), [animateSpread])
   const handleAntigravity = useCallback(() => animateSpread(2.2),  [animateSpread])
 
-  // ── Positions from current spread (computed fresh each frame) ────────────
-  function getPositions(spaces) {
+  // ── Positions from current spread + organic float offset ─────────────────
+  function getPositions(spaces, t = 0) {
     const sp = spreadRef.current
     const nonCurrent = spaces.filter(s => !s.isCurrent)
     return spaces.map(space => {
       if (space.isCurrent) return { x: 50, y: 50, z: 0 }
-      const p = milkyWayPos(nonCurrent.indexOf(space), nonCurrent.length)
-      return { x: 50 + (p.x - 50) * sp, y: 50 + (p.y - 50) * sp, z: (p.z || 0) * sp }
+      const p  = milkyWayPos(nonCurrent.indexOf(space), nonCurrent.length)
+      const fp = floatParams(space.name)
+      const fx = Math.sin(t / fp.tx  + fp.px)  * fp.ax  + Math.sin(t / fp.tx2 + fp.px2) * fp.ax2
+      const fy = Math.cos(t / fp.ty  + fp.py)  * fp.ay  + Math.cos(t / fp.ty2 + fp.py2) * fp.ay2
+      const fz = Math.sin(t / fp.tz  + fp.pz)  * fp.az
+      return {
+        x: 50 + (p.x - 50) * sp + fx,
+        y: 50 + (p.y - 50) * sp + fy,
+        z: (p.z || 0) * sp + fz,
+      }
     })
   }
 
@@ -291,7 +300,7 @@ export default function GalaxyView({ spaceGroups, currentSpacePath, onSelectSpac
     const mx = clientX - rect.left, my = clientY - rect.top
     const W = canvas.width, H = canvas.height
     const spaces = spacesRef.current
-    const positions = getPositions(spaces)
+    const positions = getPositions(spaces, timeRef.current)
     // Iterate in reverse so topmost (drawn last) wins
     for (let i = spaces.length - 1; i >= 0; i--) {
       const pos = positions[i]; if (!pos) continue
@@ -312,6 +321,9 @@ export default function GalaxyView({ spaceGroups, currentSpacePath, onSelectSpac
     const ctx = canvas.getContext('2d')
     const W = canvas.width, H = canvas.height
     const t = ts / 1000
+    const dt = prevTsRef.current !== null ? Math.min((ts - prevTsRef.current) / 1000, 0.1) : 0
+    prevTsRef.current = ts
+    timeRef.current = t
 
     ctx.clearRect(0, 0, W, H)
 
@@ -344,71 +356,83 @@ export default function GalaxyView({ spaceGroups, currentSpacePath, onSelectSpac
       ctx.restore()
     })
 
-    // Background stars — twinkle via sin
+    // Background stars — drift + twinkle + subtle spikes
     BG_STARS.forEach(s => {
       const tw = 0.5 + 0.5 * Math.sin(2*Math.PI*t/s.dur + s.delay)
-      ctx.globalAlpha = s.op * (0.2 + 0.8*tw)
-      ctx.beginPath(); ctx.arc(s.x*W, s.y*H, s.r*(1 + 0.6*tw), 0, Math.PI*2)
+      const dx = s.dax * 3.5 * Math.sin(t / s.dtx + s.dpx)
+      const dy = s.day * 2.8 * Math.cos(t / s.dty + s.dpy)
+      const x = s.x*W + dx, y = s.y*H + dy
+      const r = s.r * (0.85 + 0.35*tw)
+      const op = s.op * (0.25 + 0.75*tw)
+      // Core dot
+      ctx.globalAlpha = op
+      ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2)
       ctx.fillStyle = '#fff'; ctx.fill()
+      // Cross spikes — twinkle fires broadly, longer spikes
+      if (tw > 0.35) {
+        const spikeAlpha = op * (tw - 0.35) * 2.4
+        const spikeLen = r * 4.5 * ((tw - 0.35) / 0.65)
+        ctx.globalAlpha = spikeAlpha
+        ctx.strokeStyle = '#fff'
+        ctx.lineWidth = 0.35
+        ctx.beginPath()
+        ctx.moveTo(x - spikeLen, y); ctx.lineTo(x + spikeLen, y)
+        ctx.moveTo(x, y - spikeLen); ctx.lineTo(x, y + spikeLen)
+        ctx.stroke()
+      }
     })
     ctx.globalAlpha = 1
 
-    // Orphaned drifting particles
-    ORPHAN_NODES.forEach(o => {
-      const dx = Math.cos(t/o.tx + o.px) * o.ax
-      const dy = Math.cos(t/o.ty + o.py) * o.ay
-      const x = (o.x/100)*W + dx, y = (o.y/100)*H + dy
-      const [rr, gg, bb] = o.rgb.split(',').map(Number)
-      ctx.globalAlpha = o.op
-      ctx.beginPath(); ctx.arc(x, y, o.r, 0, Math.PI*2)
-      ctx.fillStyle = `rgb(${rr},${gg},${bb})`; ctx.fill()
+    // ── Shooting stars ────────────────────────────────────────────────────────
+    nextShootRef.current -= dt
+    if (nextShootRef.current <= 0) {
+      // Spawn from a random point along the top-left region, heading diagonally
+      const angle = (Math.PI / 6) + Math.random() * (Math.PI / 4)  // 30–75° downward
+      const speed = 220 + Math.random() * 280                        // px/s
+      shootingStarsRef.current.push({
+        x:   W * (0.05 + Math.random() * 0.75),
+        y:   H * (0.02 + Math.random() * 0.28),
+        vx:  Math.cos(angle) * speed,
+        vy:  Math.sin(angle) * speed,
+        len: 60 + Math.random() * 100,
+        life: 1,                 // 0→1, counts down
+        dur:  0.5 + Math.random() * 0.4,
+      })
+      nextShootRef.current = 4 + Math.random() * 9   // 4–13 s until next
+    }
+    shootingStarsRef.current = shootingStarsRef.current.filter(ss => ss.life > 0)
+    shootingStarsRef.current.forEach(ss => {
+      ss.life -= dt / ss.dur
+      const progress = 1 - Math.max(0, ss.life)
+      const alpha = Math.sin(progress * Math.PI) * 0.7  // fade in + out
+      const tx = ss.x + ss.vx * progress * ss.dur
+      const ty = ss.y + ss.vy * progress * ss.dur
+      const tailX = tx - Math.cos(Math.atan2(ss.vy, ss.vx)) * ss.len * Math.min(progress * 4, 1)
+      const tailY = ty - Math.sin(Math.atan2(ss.vy, ss.vx)) * ss.len * Math.min(progress * 4, 1)
+      const grad = ctx.createLinearGradient(tailX, tailY, tx, ty)
+      grad.addColorStop(0, `rgba(255,255,255,0)`)
+      grad.addColorStop(1, `rgba(255,255,255,${alpha})`)
+      ctx.globalAlpha = 1
+      ctx.beginPath()
+      ctx.moveTo(tailX, tailY)
+      ctx.lineTo(tx, ty)
+      ctx.strokeStyle = grad
+      ctx.lineWidth = 1.2
+      ctx.stroke()
+      // bright head
+      ctx.globalAlpha = alpha * 0.9
+      ctx.beginPath(); ctx.arc(tx, ty, 1.5, 0, Math.PI * 2)
+      ctx.fillStyle = '#fff'; ctx.fill()
       ctx.globalAlpha = 1
     })
 
     const spaces = spacesRef.current
-    const positions = getPositions(spaces)
-    const connections = connectionsRef.current
+    const positions = getPositions(spaces, t)
     const curTilt = tilt.current
     const curPan = pan.current
     const curZoom = zoom.current
     const curHovered = hoveredRef.current
     const curFlyingTo = flyingToRef.current
-
-    // Decorative ghost nodes — projected into 3D space
-    GHOST_NODES.forEach((g, i) => {
-      const dx = Math.cos(t/g.tx + g.px) * g.ax
-      const dy = Math.cos(t/g.ty + g.py) * g.ay
-      const dz = Math.cos(t/g.tz + g.pz) * g.az
-      const { sx, sy, pf } = project(g.x + dx*0.1, g.y + dy*0.1, g.z + dz, W, H, curPan, curTilt, curZoom)
-      const size = g.size * pf
-      const [cr, cg, cb] = hexRgb(g.color)
-      ctx.globalAlpha = g.op
-      if (g.hasRing) {
-        ctx.save(); ctx.translate(sx, sy)
-        ctx.beginPath()
-        ctx.ellipse(0, 0, g.ringR*pf, g.ringR*pf*0.28, g.ringTilt, 0, Math.PI*2)
-        ctx.strokeStyle = `rgba(${cr},${cg},${cb},0.18)`
-        ctx.lineWidth = 1; ctx.stroke()
-        ctx.restore()
-      }
-      drawSphere(ctx, sx, sy, size, g.color)
-      ctx.globalAlpha = 1
-    })
-
-    // Connection lines between space nodes
-    if (!loading && connections.length > 0) {
-      ctx.save()
-      connections.forEach(([a, b]) => {
-        const pa = positions[a], pb = positions[b]; if (!pa || !pb) return
-        const { sx: x1, sy: y1 } = project(pa.x, pa.y, pa.z, W, H, curPan, curTilt, curZoom)
-        const { sx: x2, sy: y2 } = project(pb.x, pb.y, pb.z, W, H, curPan, curTilt, curZoom)
-        const [cr, cg, cb] = hexRgb(spaces[a]?.color || '#ffffff')
-        ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2)
-        ctx.strokeStyle = `rgba(${cr},${cg},${cb},0.14)`
-        ctx.lineWidth = 0.8; ctx.stroke()
-      })
-      ctx.restore()
-    }
 
     // Space nodes — sorted by depth (painter's algorithm)
     if (!loading && spaces.length > 0) {
@@ -452,49 +476,27 @@ export default function GalaxyView({ spaceGroups, currentSpacePath, onSelectSpac
           ctx.lineWidth = 1.5; ctx.stroke()
         }
 
-        // Inner orbital ring + dots (tilted)
-        const tiltData = orbitTilt(space.name)
-        const innerDots = Math.min(space.topicCount, 8)
-        if (innerDots > 0) {
-          const innerR = bodyR / 2 + 23 * pf
-          ctx.save(); ctx.translate(sx, sy)
-          ctx.scale(1, Math.abs(Math.cos(tiltData.ix * Math.PI / 180)) * 0.5 + 0.15)
-          ctx.rotate(tiltData.iy * Math.PI / 180)
-          ctx.beginPath(); ctx.arc(0, 0, innerR, 0, Math.PI*2)
-          ctx.strokeStyle = `rgba(${cr},${cg},${cb},0.20)`; ctx.lineWidth = 1; ctx.stroke()
-          for (let d = 0; d < innerDots; d++) {
-            const angle = (t / (4.5 + d*0.8) + d / innerDots) * Math.PI * 2
-            ctx.beginPath(); ctx.arc(Math.cos(angle)*innerR, Math.sin(angle)*innerR, 2*pf, 0, Math.PI*2)
-            ctx.fillStyle = `rgba(${cr},${cg},${cb},0.72)`; ctx.fill()
+        // 4 orbital paths — dots only, no visible ring lines
+        const rings = orbitRings(space.name)
+        rings.forEach(ring => {
+          const orbitR = (bodyR / 2 + ring.radiusOffset) * pf
+          ctx.save()
+          ctx.translate(sx, sy)
+          ctx.rotate(ring.rotation)
+          ctx.scale(1, ring.flatness)
+          for (let d = 0; d < ring.dots; d++) {
+            const angle = (t * ring.dir / ring.speed + d / ring.dots) * Math.PI * 2
+            const dx = Math.cos(angle) * orbitR
+            const dy = Math.sin(angle) * orbitR
+            ctx.beginPath()
+            ctx.arc(dx, dy, ring.dotR * pf, 0, Math.PI * 2)
+            ctx.fillStyle = `rgba(${cr},${cg},${cb},${ring.alpha})`
+            ctx.fill()
           }
           ctx.restore()
-        }
+        })
 
-        // Outer orbital ring + dots
-        const outerDots = Math.min(Math.ceil(space.noteCount / 4), 12)
-        if (outerDots > 0) {
-          const outerR = bodyR / 2 + 35 * pf
-          ctx.save(); ctx.translate(sx, sy)
-          ctx.scale(1, Math.abs(Math.cos(tiltData.ox * Math.PI / 180)) * 0.5 + 0.15)
-          ctx.rotate(tiltData.oy * Math.PI / 180)
-          ctx.beginPath(); ctx.arc(0, 0, outerR, 0, Math.PI*2)
-          ctx.strokeStyle = `rgba(${cr},${cg},${cb},0.10)`; ctx.lineWidth = 1; ctx.stroke()
-          for (let d = 0; d < outerDots; d++) {
-            const angle = (t / (7 + d*0.45) + d / outerDots) * Math.PI * 2
-            ctx.beginPath(); ctx.arc(Math.cos(angle)*outerR, Math.sin(angle)*outerR, pf, 0, Math.PI*2)
-            ctx.fillStyle = `rgba(${cr},${cg},${cb},0.38)`; ctx.fill()
-          }
-          ctx.restore()
-        }
-
-        // Node sphere
-        drawSphere(ctx, sx, sy, bodyR, space.color)
-
-        // Active ring stroke
-        if (space.isCurrent) {
-          ctx.beginPath(); ctx.arc(sx, sy, bodyR, 0, Math.PI*2)
-          ctx.strokeStyle = `rgba(${cr},${cg},${cb},0.8)`; ctx.lineWidth = 2; ctx.stroke()
-        }
+        drawStarNode(ctx, sx, sy, space.color, t)
 
         // Label
         const fontPx = Math.max(9, (isHub ? 12 : 11) * Math.min(pf, 1.4))
@@ -530,13 +532,67 @@ export default function GalaxyView({ spaceGroups, currentSpacePath, onSelectSpac
       })
     }
 
+    // ── Black hole (bottom-right, canvas-rendered) ────────────────────────────
+    {
+      const bhX = W - 72, bhY = H - 72
+      const bhActive = overBHRef.current
+      const bhTilt = Math.sin(t * Math.PI / 9) * (14 * Math.PI / 180)
+      const diskRX = BH_R * 1.9, diskRY = BH_R * 0.38
+      const singR  = BH_R * 0.69
+
+      // Outer ambient glow
+      const bhGlow = ctx.createRadialGradient(bhX, bhY, 0, bhX, bhY, BH_R * 3.25)
+      bhGlow.addColorStop(0,    bhActive ? 'rgba(255,160,40,0.52)' : 'rgba(255,110,15,0.28)')
+      bhGlow.addColorStop(0.42, bhActive ? 'rgba(255,70,0,0.20)'  : 'rgba(200,50,0,0.09)')
+      bhGlow.addColorStop(1,    'rgba(0,0,0,0)')
+      ctx.beginPath(); ctx.arc(bhX, bhY, BH_R * 3.25, 0, Math.PI * 2)
+      ctx.fillStyle = bhGlow; ctx.fill()
+
+      // Back disk — dim, behind singularity (clip to upper half)
+      ctx.save()
+      ctx.beginPath(); ctx.rect(0, 0, W, bhY); ctx.clip()
+      ctx.beginPath(); ctx.ellipse(bhX, bhY, diskRX, diskRY, bhTilt, 0, Math.PI * 2)
+      ctx.strokeStyle = bhActive ? 'rgba(180,60,0,0.55)' : 'rgba(180,60,0,0.38)'
+      ctx.lineWidth = bhActive ? 5 : 4; ctx.stroke()
+      ctx.restore()
+
+      // Event horizon — black circle
+      ctx.beginPath(); ctx.arc(bhX, bhY, singR, 0, Math.PI * 2)
+      ctx.fillStyle = '#000'; ctx.fill()
+      // Photon ring glow
+      ctx.save()
+      ctx.shadowColor = bhActive ? 'rgba(255,130,0,0.95)' : 'rgba(255,90,0,0.60)'
+      ctx.shadowBlur  = bhActive ? 16 : 12
+      ctx.beginPath(); ctx.arc(bhX, bhY, singR, 0, Math.PI * 2)
+      ctx.strokeStyle = bhActive ? 'rgba(255,200,70,1)' : 'rgba(255,160,30,0.80)'
+      ctx.lineWidth = bhActive ? 2.5 : 2; ctx.stroke()
+      ctx.restore()
+
+      // Front disk — bright, in front of singularity (clip to lower half)
+      ctx.save()
+      ctx.beginPath(); ctx.rect(0, bhY, W, H); ctx.clip()
+      ctx.save()
+      ctx.shadowColor = bhActive ? 'rgba(255,170,30,0.92)' : 'rgba(255,150,20,0.75)'
+      ctx.shadowBlur  = bhActive ? 22 : 14
+      ctx.beginPath(); ctx.ellipse(bhX, bhY, diskRX, diskRY, bhTilt, 0, Math.PI * 2)
+      ctx.strokeStyle = bhActive ? 'rgba(255,210,60,0.96)' : 'rgba(255,210,60,0.88)'
+      ctx.lineWidth = bhActive ? 8 : 6; ctx.stroke()
+      ctx.restore(); ctx.restore()
+
+      // Label
+      ctx.textAlign = 'center'
+      ctx.font = bhActive ? 'bold 10px -apple-system,sans-serif' : '9px -apple-system,sans-serif'
+      ctx.fillStyle = bhActive ? 'rgba(255,210,80,0.95)' : 'rgba(220,130,30,0.52)'
+      ctx.fillText(bhActive ? '⬤ Archive' : 'Archive', bhX, bhY + singR + 14)
+    }
+
     // Loading / empty overlay text
     if (loading || spaces.length === 0) {
       ctx.font = '13px -apple-system,"Segoe UI Variable",sans-serif'
       ctx.fillStyle = 'rgba(255,255,255,0.18)'
       ctx.textAlign = 'center'
       ctx.fillText(
-        loading ? 'Mapping the galaxy…' : 'No spaces found. Add a Space Group to get started.',
+        loading ? 'Mapping the galaxy…' : 'No spaces found. Add a Space to get started.',
         W/2, H/2
       )
     }
@@ -575,7 +631,12 @@ export default function GalaxyView({ spaceGroups, currentSpacePath, onSelectSpac
     const hit = e.button === 0 ? hitTest(e.clientX, e.clientY) : null
 
     if (hit && e.button === 0) {
-      if (hit.isCurrent) return
+      if (hit.isCurrent) {
+        // Current star: close galaxy on mouseup (no drag allowed)
+        const onUp = () => { document.removeEventListener('mouseup', onUp); handleSelect(hit, e.clientX, e.clientY) }
+        document.addEventListener('mouseup', onUp)
+        return
+      }
       const startX = e.clientX, startY = e.clientY
       let didDrag = false
       const onMove = me => {
@@ -636,6 +697,15 @@ export default function GalaxyView({ spaceGroups, currentSpacePath, onSelectSpac
     zoom.current = Math.max(0.3, Math.min(2.8, zoom.current * (e.deltaY < 0 ? 1.09 : 0.92)))
   }, [])
 
+  // Must use a native listener with { passive: false } so preventDefault() is allowed.
+  // React's synthetic onWheel is passive in React 17+ and cannot call preventDefault.
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    canvas.addEventListener('wheel', handleWheel, { passive: false })
+    return () => canvas.removeEventListener('wheel', handleWheel)
+  }, [handleWheel])
+
   const handleFlyEnd = useCallback(() => {
     if (flyingTo && onSelectSpace) onSelectSpace(flyingTo.path)
   }, [flyingTo, onSelectSpace])
@@ -663,7 +733,6 @@ export default function GalaxyView({ spaceGroups, currentSpacePath, onSelectSpac
         style={{ position:'absolute', inset:0, display:'block' }}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
-        onWheel={handleWheel}
       />
 
       {/* Header */}
@@ -683,9 +752,16 @@ export default function GalaxyView({ spaceGroups, currentSpacePath, onSelectSpac
               : `${spaces.length} space${spaces.length!==1?'s':''} discovered · drag to pan · right-drag to orbit · scroll to zoom`}
           </div>
         </div>
+        <div style={{
+          position:'absolute',left:'50%',transform:'translateX(-50%)',
+          fontSize:18,fontWeight:300,color:'rgba(255,255,255,0.28)',
+          letterSpacing:'0.04em',pointerEvents:'none',userSelect:'none',
+        }}>
+          What's on your mind?
+        </div>
         <div style={{display:'flex',gap:8,alignItems:'center'}}>
           {[
-            { label:'Recenter', title:'Reset pan, tilt, zoom and spread', onClick: handleRecenter,
+            { label:'Center', title:'Reset pan, tilt, zoom and spread', onClick: handleRecenter,
               icon: <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="3"/><line x1="12" y1="2" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="2" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="22" y2="12"/></svg> },
             { label:'Gravity', title:'Pull spaces toward center', onClick: handleGravity,
               icon: <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="2" x2="12" y2="8"/><polyline points="9 5 12 8 15 5"/><line x1="22" y1="12" x2="16" y2="12"/><polyline points="19 9 16 12 19 15"/><line x1="12" y1="22" x2="12" y2="16"/><polyline points="15 19 12 16 9 19"/><line x1="2" y1="12" x2="8" y2="12"/><polyline points="5 15 8 12 5 9"/></svg> },
@@ -708,7 +784,7 @@ export default function GalaxyView({ spaceGroups, currentSpacePath, onSelectSpac
                 border:'1px solid rgba(255,255,255,0.07)',transition:'all 0.15s'}}
               onMouseEnter={e=>{e.currentTarget.style.background='rgba(255,255,255,0.08)';e.currentTarget.style.color='rgba(255,255,255,0.7)'}}
               onMouseLeave={e=>{e.currentTarget.style.background='rgba(255,255,255,0.04)';e.currentTarget.style.color='rgba(255,255,255,0.38)'}}
-            >Space Groups</button>
+            >Spaces</button>
           )}
           <button onClick={onClose}
             style={{padding:'5px 14px',fontSize:12,borderRadius:8,cursor:'pointer',
@@ -720,41 +796,6 @@ export default function GalaxyView({ spaceGroups, currentSpacePath, onSelectSpac
         </div>
       </div>
 
-      {/* Black hole — fixed screen-space, bottom-right */}
-      <div style={{
-        position:'absolute', right:72, bottom:72,
-        transform:'translate(50%,50%)',
-        width:BH_R*8, height:BH_R*8,
-        display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center',
-        zIndex:flyingTo?-1:10, pointerEvents:'none',
-      }}>
-        <div style={{
-          position:'absolute', width:BH_R*6, height:BH_R*6, borderRadius:'50%',
-          background: overBH
-            ? 'radial-gradient(circle,rgba(180,80,255,0.55) 0%,rgba(100,20,220,0.22) 50%,rgba(0,0,0,0) 100%)'
-            : 'radial-gradient(circle,rgba(100,40,200,0.28) 0%,rgba(60,10,150,0.10) 50%,rgba(0,0,0,0) 100%)',
-          transition:'background 0.2s',
-        }} />
-        <div style={{position:'absolute',width:BH_R*3,height:BH_R*3,animation:'gv-bh-spin 3s linear infinite'}}>
-          <div style={{width:'100%',height:'100%',borderRadius:'50%',
-            border: overBH ? '3.5px solid rgba(200,120,255,0.75)' : '2.5px solid rgba(140,70,230,0.45)',
-            transform:'scaleY(0.27)',transition:'border 0.2s'}} />
-        </div>
-        <div style={{position:'absolute',width:BH_R*2.2,height:BH_R*2.2,animation:'gv-bh-spin2 5s linear infinite'}}>
-          <div style={{width:'100%',height:'100%',borderRadius:'50%',
-            border:'1.5px solid rgba(160,100,240,0.28)',transform:'scaleY(0.25)'}} />
-        </div>
-        <div style={{
-          width:BH_R*1.24,height:BH_R*1.24,borderRadius:'50%',background:'#000',
-          boxShadow: overBH ? '0 0 0 1.5px rgba(200,120,255,0.9)' : '0 0 0 1.5px rgba(140,70,230,0.6)',
-          zIndex:1,transition:'box-shadow 0.2s',
-        }} />
-        <div style={{
-          position:'absolute', bottom:-4, fontSize: overBH?10:9, fontWeight: overBH?600:400,
-          color: overBH?'rgba(220,160,255,0.95)':'rgba(160,100,220,0.55)',
-          letterSpacing:'0.04em', whiteSpace:'nowrap', transition:'all 0.2s',
-        }}>{overBH ? '⬤ Archive' : 'Archive'}</div>
-      </div>
 
       {/* Ghost star — follows cursor while dragging */}
       {draggingStar && (
@@ -791,8 +832,6 @@ export default function GalaxyView({ spaceGroups, currentSpacePath, onSelectSpac
           60% { transform:scale(8);  opacity:1;   }
           100%{ transform:scale(55); opacity:0.9; }
         }
-        @keyframes gv-bh-spin  { from{transform:rotate(0deg);}   to{transform:rotate(360deg);}  }
-        @keyframes gv-bh-spin2 { from{transform:rotate(216deg);} to{transform:rotate(576deg);}  }
       `}</style>
     </div>
   )
