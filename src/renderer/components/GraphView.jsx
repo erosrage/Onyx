@@ -5,35 +5,73 @@ const GLASS_BORDER = '1px solid var(--glass-border)'
 
 // Wang hash — breaks LCG correlations, gives organic-looking scatter
 function wh(n) { n = (n ^ 61) ^ (n >>> 16); n *= 9; n ^= n >>> 4; n *= 0x27d4eb2d; n ^= n >>> 15; return (n >>> 0) }
-// Stars: clustered — 60% seeded around 6 loose cluster centres, 40% scattered freely
-const _CLUSTERS = [[22,30],[55,18],[78,65],[35,72],[68,42],[12,80]]
-const GV_STARS = Array.from({ length: 260 }, (_, i) => {
-  const hx = wh(i * 3 + 1), hy = wh(i * 3 + 2), hm = wh(i * 3 + 3)
+
+// MW band angle — matches GalaxyView (≈ −32°)
+const _GV_MW_A   = -Math.PI * 0.178
+const _GV_MW_COS = Math.cos(_GV_MW_A)
+const _GV_MW_SIN = Math.sin(_GV_MW_A)
+
+// Stars: 65% concentrated along the MW band, 35% scattered — spectral colors
+const GV_STARS = Array.from({ length: 580 }, (_, i) => {
+  const h1 = wh(i*17+1), h2 = wh(i*17+2), h3 = wh(i*17+3)
+  const h4 = wh(i*17+4), h5 = wh(i*17+5), h6 = wh(i*17+6)
   let nx, ny
-  if (i < 156) { // clustered
-    const [cx, cy] = _CLUSTERS[i % _CLUSTERS.length]
-    nx = cx + ((hx % 40000) / 1000 - 20)   // ±20% spread around cluster
-    ny = cy + ((hy % 30000) / 1000 - 15)
-  } else {       // free scatter
-    nx = (hx % 98000) / 1000 + 1
-    ny = (hy % 96000) / 1000 + 2
+  const inBand = i < 377
+  if (inBand) {
+    const along  = (h1 % 100000) / 100000 - 0.5
+    const across = ((h2 % 10000) / 5000 - 1 + (h3 % 10000) / 5000 - 1) * 0.065
+    nx = 50 + (along * 1.65 * _GV_MW_COS - across * _GV_MW_SIN) * 100
+    ny = 50 + (along * 1.65 * _GV_MW_SIN + across * _GV_MW_COS) * 100
+  } else {
+    nx = (h1 % 98000) / 1000 + 1
+    ny = (h2 % 96000) / 1000 + 2
   }
-  return {
-    nx: Math.max(0.5, Math.min(99.5, nx)),
-    ny: Math.max(0.5, Math.min(99.5, ny)),
-    r:  0.3 + (hm % 24) / 14,
-    op: 0.06 + (wh(i * 7 + 5) % 420) / 2400,
-  }
+  const sc  = h4 % 1000
+  const r   = sc < 680 ? 0.20 + (h5 % 10) / 22
+            : sc < 900 ? 0.52 + (h5 % 10) / 14
+            : sc < 970 ? 0.85 + (h5 % 12) / 11
+            : 1.40 + (h5 % 14) / 8
+  const bMul = inBand ? 1.45 : 1.0
+  const op  = (sc < 680 ? 0.040 + (h6 % 120) / 3000
+             : sc < 900 ? 0.100 + (h6 % 170) / 1800
+             : sc < 970 ? 0.220 + (h6 % 180) / 1000
+             : 0.450 + (h6 % 200) / 800) * bMul
+  const ct  = wh(i*13+7) % 100
+  const col = ct < 32 ? '#ffffff'    // white A-type
+            : ct < 58 ? '#c2daff'    // blue-white B-type (dominant)
+            : ct < 70 ? '#e8f2ff'    // pale blue-white
+            : ct < 78 ? '#94b8ff'    // bright blue O-type
+            : ct < 87 ? '#fffaf4'    // warm white F/G-type
+            : ct < 93 ? '#ffd49a'    // orange K-type
+            : '#ffb87a'              // red-orange M-type
+  return { nx: Math.max(0.5, Math.min(99.5, nx)),
+           ny: Math.max(0.5, Math.min(99.5, ny)), r, op, col }
 })
 
-// Nebula clouds — fixed normalised positions, drawn as radial gradients each frame
+// Nebula clouds — 10 overlapping gradient ellipses matching reference imagery
+// cx/cy in 0-100 normalised; rx/ry as fraction of W/H; r,g,b,op for fill color
 const GV_NEBULAS = [
-  { nx: 22, ny: 32, rw: 0.28, rh: 0.18, rot: -0.18, rgba: '99,102,241',  op: 0.045 },
-  { nx: 68, ny: 62, rw: 0.22, rh: 0.16, rot:  0.25, rgba: '236,72,153',  op: 0.038 },
-  { nx: 48, ny: 20, rw: 0.20, rh: 0.13, rot:  0.10, rgba: '56,189,248',  op: 0.032 },
-  { nx: 78, ny: 78, rw: 0.18, rh: 0.14, rot: -0.30, rgba: '74,222,128',  op: 0.028 },
-  { nx: 14, ny: 70, rw: 0.16, rh: 0.12, rot:  0.05, rgba: '251,146,60',  op: 0.030 },
-  { nx: 55, ny: 50, rw: 0.25, rh: 0.15, rot:  0.40, rgba: '167,139,250', op: 0.035 },
+  { cx:42, cy:36, rx:0.44, ry:0.27, rot: 0.15, r:28,  g:168, b:205, op:0.115 }, // teal
+  { cx:62, cy:50, rx:0.40, ry:0.26, rot:-0.10, r:112, g:40,  b:188, op:0.105 }, // violet
+  { cx:78, cy:28, rx:0.30, ry:0.21, rot: 0.22, r:198, g:38,  b:150, op:0.090 }, // magenta
+  { cx:82, cy:70, rx:0.28, ry:0.20, rot:-0.15, r:205, g:85,  b:28,  op:0.098 }, // orange
+  { cx:15, cy:52, rx:0.34, ry:0.25, rot: 0.05, r:38,  g:70,  b:198, op:0.098 }, // deep blue
+  { cx:58, cy:18, rx:0.24, ry:0.17, rot: 0.30, r:40,  g:210, b:228, op:0.078 }, // cyan
+  { cx:20, cy:72, rx:0.30, ry:0.21, rot:-0.20, r:50,  g:36,  b:182, op:0.098 }, // indigo
+  { cx:28, cy:36, rx:0.26, ry:0.18, rot: 0.10, r:150, g:48,  b:172, op:0.082 }, // purple-rose
+  { cx:68, cy:62, rx:0.24, ry:0.17, rot: 0.08, r:26,  g:188, b:148, op:0.072 }, // teal-green
+  { cx:50, cy:76, rx:0.28, ry:0.19, rot:-0.05, r:178, g:34,  b:122, op:0.080 }, // rose-violet
+]
+// Featured bright stars — animated halo + 4-point & diagonal diffraction spikes
+const GV_BRIGHT_STARS = [
+  { nx:0.07, ny:0.09, r:2.4, col:'#9dc8ff' },
+  { nx:0.90, ny:0.11, r:2.0, col:'#b8d4ff' },
+  { nx:0.83, ny:0.83, r:1.7, col:'#ffecd0' },
+  { nx:0.13, ny:0.78, r:1.9, col:'#c0d8ff' },
+  { nx:0.53, ny:0.16, r:2.2, col:'#d0e4ff' },
+  { nx:0.93, ny:0.47, r:1.5, col:'#a8c0ff' },
+  { nx:0.37, ny:0.92, r:1.6, col:'#ffe8c0' },
+  { nx:0.72, ny:0.05, r:1.8, col:'#c8e0ff' },
 ]
 
 // Convert a 6-digit hex color to { r, g, b }
@@ -262,7 +300,7 @@ async function buildGraph(allFiles) {
   return { nodes, edges, nodeById }
 }
 
-export default function GraphView({ files, activeFile, onOpenFile, onCreateFile, onDeleteFiles, onMoveFile, onArchiveTopic, onArchiveFile, onUnarchiveTopic, onUnarchiveFile, onRevealFolder, theme, vaultPath, onSwitchSpace, isVisible, recenterToken, centerOnStarToken, hasOverlay }) {
+export default function GraphView({ files, activeFile, onOpenFile, onCreateFile, onDeleteFiles, onMoveFile, onArchiveTopic, onArchiveFile, onUnarchiveTopic, onUnarchiveFile, onRevealFolder, theme, vaultPath, onSwitchSpace, isVisible, recenterToken, centerOnStarToken, hasOverlay, spaceGroups = [], onMoveTopic }) {
   const canvasRef = useRef(null)
   const graphRef = useRef({ nodes: [], edges: [], nodeById: {} })
   const viewRef = useRef({ scale: 1, panX: 0, panY: 0, tiltX: 0, tiltY: 0 })
@@ -280,12 +318,22 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
     confirmResolveRef.current = resolve
     setConfirmModal({ title, message })
   })
+  const [moveToSpaceModal, setMoveToSpaceModal] = useState(null) // { topicFolder, topicName }
+  const [availableSpaces, setAvailableSpaces] = useState([]) // [{ groupName, spaces }]
   const setCtxMenuRef = useRef(setCtxMenu)
   const setHoveredNodeRef = useRef(setHoveredNode)
   const recenterRef = useRef(null)
   const centerOnStarRef = useRef(null)
   const gravityImpulseRef = useRef(0) // >0 = attract toward center, <0 = repel from center
+  const [bhArchiveOpen, setBhArchiveOpen] = useState(false)
+  const [bhCtxMenu, setBhCtxMenu]         = useState(null) // { x, y }
+  const setBhArchiveOpenRef = useRef(setBhArchiveOpen)
+  const setBhCtxMenuRef     = useRef(setBhCtxMenu)
+  useEffect(() => { setBhArchiveOpenRef.current = setBhArchiveOpen }, [setBhArchiveOpen])
+  useEffect(() => { setBhCtxMenuRef.current = setBhCtxMenu }, [setBhCtxMenu])
   const centerStarRef = useRef({ sx: -9999, sy: -9999, r: 42 }) // screen pos + hit radius of center star
+  const prevVaultPathRef = useRef(vaultPath)
+  const pendingVaultFitRef = useRef(false) // triggers refit from inside the animation loop after vault switch
 
   // Reset move submenu whenever menu closes
   useEffect(() => { if (!ctxMenu) setCtxMoveOpen(false) }, [ctxMenu])
@@ -330,10 +378,16 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
         }
       })
       graphRef.current = { nodes, edges, nodeById }
-      // Reset centering on first load OR vault switch (no node overlap with previous graph)
+      // Reset centering on first load OR vault switch.
+      // Use vault path comparison (not just node IDs) so spaces that share
+      // identically-named files are still detected as a vault switch.
       const hadNodes = Object.keys(prevNodeById).length > 0
-      const isVaultSwitch = hadNodes && nodes.length > 0 && nodes.every(n => !prevNodeById[n.id])
-      if (!hadNodes || isVaultSwitch) viewRef.current.centered = false
+      const isVaultSwitch = hadNodes && prevVaultPathRef.current !== vaultPath
+      prevVaultPathRef.current = vaultPath
+      if (!hadNodes || isVaultSwitch) {
+        viewRef.current.centered = false
+        pendingVaultFitRef.current = true
+      }
       setStats({ nodes: nodes.filter(n => !n.isTag && !n._archived).length, edges: edges.filter(e => !e.isTagEdge).length })
       setIsLoading(false)
     })
@@ -363,13 +417,22 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
             minX = Math.min(minX, n.x - r); maxX = Math.max(maxX, n.x + r)
             minY = Math.min(minY, n.y - r); maxY = Math.max(maxY, n.y + r)
           })
-          const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2
-          const pad = 80
-          const scaleX = (W - pad * 2) / Math.max(maxX - minX, 1)
-          const scaleY = (H - pad * 2) / Math.max(maxY - minY, 1)
-          view.scale = Math.min(Math.min(scaleX, scaleY), 1.5)
-          view.panX = W / 2 - cx * view.scale
-          view.panY = H / 2 - cy * view.scale
+          const spread = Math.max(maxX - minX, maxY - minY)
+          if (spread < 100) {
+            // Nodes just spawned and are still clustered — use a neutral view centered
+            // on the origin so nodes have room to spread outward before the 900ms refit.
+            view.scale = 1.0
+            view.panX = W / 2
+            view.panY = H / 2
+          } else {
+            const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2
+            const pad = 80
+            const scaleX = (W - pad * 2) / Math.max(maxX - minX, 1)
+            const scaleY = (H - pad * 2) / Math.max(maxY - minY, 1)
+            view.scale = Math.min(Math.min(scaleX, scaleY), 1.5)
+            view.panX = W / 2 - cx * view.scale
+            view.panY = H / 2 - cy * view.scale
+          }
         } else {
           view.panX = W / 2; view.panY = H / 2
         }
@@ -510,31 +573,74 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
 
     function draw() {
       const t = performance.now() * 0.001
+      // Smooth speed ramp — 3× faster when cursor is over BH
+      const _bhTarget = bhCursorHover ? 1.08 : 0.359
+      bhSpeedCurrent += (_bhTarget - bhSpeedCurrent) * 0.08
       ctx.clearRect(0, 0, W, H)
 
-      // Nebula clouds + starfield — dark mode only, matches galaxy view aesthetic
+      // Background — dark mode: deep space + nebula clouds + bright stars
       if (isDark) {
-        // Nebula clouds — soft radial gradients at fixed canvas-relative positions
-        for (const nb of GV_NEBULAS) {
-          const cx = nb.nx / 100 * W, cy = nb.ny / 100 * H
-          const rx = nb.rw * W, ry = nb.rh * H
+        // Very dark blue-black base
+        ctx.fillStyle = '#000510'
+        ctx.fillRect(0, 0, W, H)
+        // Edge vignette
+        const vig = ctx.createRadialGradient(W/2,H/2,0, W/2,H/2,Math.max(W,H)*0.72)
+        vig.addColorStop(0,'rgba(0,0,0,0)'); vig.addColorStop(1,'rgba(0,0,12,0.60)')
+        ctx.fillStyle = vig; ctx.fillRect(0, 0, W, H)
+
+        // 10 layered nebula clouds — soft radial gradients, no blur filter
+        for (const n of GV_NEBULAS) {
           ctx.save()
-          ctx.translate(cx, cy); ctx.rotate(nb.rot); ctx.scale(1, ry / rx)
-          const g = ctx.createRadialGradient(0, 0, 0, 0, 0, rx)
-          g.addColorStop(0,   `rgba(${nb.rgba},${nb.op})`)
-          g.addColorStop(0.5, `rgba(${nb.rgba},${nb.op * 0.4})`)
-          g.addColorStop(1,   `rgba(${nb.rgba},0)`)
-          ctx.beginPath(); ctx.arc(0, 0, rx, 0, Math.PI * 2)
-          ctx.fillStyle = g; ctx.fill()
+          ctx.translate(n.cx/100*W, n.cy/100*H); ctx.rotate(n.rot)
+          const rw = n.rx*W, rh = n.ry*H
+          const ng = ctx.createRadialGradient(0,0,0, 0,0,rw)
+          ng.addColorStop(0,    `rgba(${n.r},${n.g},${n.b},${n.op})`)
+          ng.addColorStop(0.38, `rgba(${n.r},${n.g},${n.b},${+(n.op*0.52).toFixed(4)})`)
+          ng.addColorStop(0.72, `rgba(${n.r},${n.g},${n.b},${+(n.op*0.14).toFixed(4)})`)
+          ng.addColorStop(1,    `rgba(${n.r},${n.g},${n.b},0)`)
+          ctx.scale(1, rh/rw)
+          ctx.beginPath(); ctx.arc(0,0,rw,0,Math.PI*2)
+          ctx.fillStyle = ng; ctx.fill()
           ctx.restore()
         }
-        // Stars — clustered, organic scatter
-        for (const star of GV_STARS) {
-          ctx.beginPath()
-          ctx.arc(star.nx / 100 * W, star.ny / 100 * H, star.r, 0, Math.PI * 2)
-          ctx.fillStyle = `rgba(255,255,255,${star.op})`
-          ctx.fill()
+
+        // Central blue-white core glow
+        const cg = ctx.createRadialGradient(W*0.48,H*0.46,0, W*0.48,H*0.46,Math.min(W,H)*0.20)
+        cg.addColorStop(0,    'rgba(148,198,255,0.15)')
+        cg.addColorStop(0.38, 'rgba(88,142,225,0.06)')
+        cg.addColorStop(1,    'rgba(0,0,0,0)')
+        ctx.beginPath(); ctx.arc(W*0.48,H*0.46,Math.min(W,H)*0.20,0,Math.PI*2)
+        ctx.fillStyle = cg; ctx.fill()
+
+        // Featured bright stars — halo + 4-point & diagonal spikes, animated
+        for (const bs of GV_BRIGHT_STARS) {
+          const x = bs.nx*W, y = bs.ny*H
+          const tw = 0.5 + 0.5*Math.sin(t*1.9 + bs.nx*18.7 + bs.ny*12.3)
+          const bsg = ctx.createRadialGradient(x,y,0, x,y,bs.r*15)
+          bsg.addColorStop(0,    `rgba(175,215,255,${+(0.22*tw).toFixed(3)})`)
+          bsg.addColorStop(0.28, `rgba(120,172,255,${+(0.08*tw).toFixed(3)})`)
+          bsg.addColorStop(1,    'rgba(0,0,0,0)')
+          ctx.beginPath(); ctx.arc(x,y,bs.r*15,0,Math.PI*2); ctx.fillStyle=bsg; ctx.fill()
+          ctx.globalAlpha = 0.78 + 0.22*tw
+          ctx.beginPath(); ctx.arc(x,y,bs.r,0,Math.PI*2); ctx.fillStyle=bs.col; ctx.fill()
+          const spL = bs.r*(9+16*tw)*0.4
+          ctx.globalAlpha = (0.28 + 0.44*tw)*0.4
+          ctx.strokeStyle = bs.col; ctx.lineWidth = 0.65
+          ctx.beginPath(); ctx.moveTo(x-spL,y); ctx.lineTo(x+spL,y); ctx.moveTo(x,y-spL); ctx.lineTo(x,y+spL); ctx.stroke()
+          const spD = spL*0.42
+          ctx.globalAlpha = (0.28+0.44*tw)*0.44*0.4; ctx.lineWidth = 0.42
+          ctx.beginPath(); ctx.moveTo(x-spD,y-spD); ctx.lineTo(x+spD,y+spD); ctx.moveTo(x+spD,y-spD); ctx.lineTo(x-spD,y+spD); ctx.stroke()
+          ctx.globalAlpha = 1
         }
+
+        // Star field — MW-band concentrated, spectral colors
+        for (const star of GV_STARS) {
+          ctx.globalAlpha = star.op
+          ctx.beginPath()
+          ctx.arc(star.nx/100*W, star.ny/100*H, star.r, 0, Math.PI*2)
+          ctx.fillStyle = star.col; ctx.fill()
+        }
+        ctx.globalAlpha = 1
       }
 
       // ── Central star at world origin — color matches the current space in galaxy view ──
@@ -711,7 +817,12 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
       // ── Black hole (fixed screen-space, bottom-right) ─────────────────────
       bhX = W - 72; bhY = H - 72
       const bhActive = bhHover
-      const spin = Math.sin(t * 0.06) * 0.22
+      // Drag-radius hint — dashed ring shown while dragging any node
+      if (isDragging) {
+        ctx.beginPath(); ctx.arc(bhX, bhY, BH_R * 1.8, 0, Math.PI * 2)
+        ctx.strokeStyle = 'rgba(255,140,30,0.28)'; ctx.lineWidth = 1
+        ctx.setLineDash([4, 5]); ctx.stroke(); ctx.setLineDash([])
+      }
       // Outer glow — warm orange/amber
       const bhGrad = ctx.createRadialGradient(bhX, bhY, BH_R * 0.3, bhX, bhY, BH_R * 2.8)
       bhGrad.addColorStop(0,   bhActive ? 'rgba(255,160,40,0.52)' : 'rgba(255,110,15,0.28)')
@@ -719,29 +830,88 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
       bhGrad.addColorStop(1,   'rgba(0,0,0,0)')
       ctx.beginPath(); ctx.arc(bhX, bhY, BH_R * 2.8, 0, Math.PI * 2)
       ctx.fillStyle = bhGrad; ctx.fill()
-      // Accretion disk (tilted ellipse, wobbling)
-      ctx.save(); ctx.translate(bhX, bhY); ctx.rotate(spin)
-      ctx.beginPath()
-      ctx.ellipse(0, 0, BH_R * 1.5, BH_R * 0.32, 0, 0, Math.PI * 2)
-      ctx.strokeStyle = bhActive ? 'rgba(255,210,60,0.88)' : 'rgba(255,160,30,0.55)'
-      ctx.lineWidth = bhActive ? 4 : 2.5; ctx.stroke()
+      // Event horizon disk — scattered/broken particle field (x-axis orbit)
+      ctx.save()
+      ctx.translate(bhX, bhY)
+      for (let i = 0; i < 209; i++) {
+        const r1 = Math.abs(Math.sin(i * 127.1 + 311.7))
+        const r2 = Math.abs(Math.sin(i * 269.5 + 183.3))
+        const r3 = Math.abs(Math.sin(i * 419.2 +  71.1))
+        const r4 = Math.abs(Math.sin(i *  73.8 + 229.4))
+        if (r4 < 0.20) continue
+        const angle = (i / 209) * Math.PI * 2 + (r1 - 0.5) * 0.50 + t * bhSpeedCurrent
+        const radF  = r2
+        const diskR = BH_R * (0.88 + radF * 0.90)
+        const ex = Math.cos(angle) * diskR
+        const ey = Math.sin(angle) * diskR * 0.30
+        const pSize = 0.2 + r3 * 0.9
+        const heat  = 1 - radF
+        const tw = 0.60 + 0.40 * Math.sin(t * 1.6 + r1 * 6.283)
+        const depth = 0.75 + 0.25 * Math.sin(angle)
+        const baseA = bhActive ? 0.50 + 0.45 * heat : 0.22 + 0.28 * heat
+        ctx.globalAlpha = baseA * (0.40 + 0.60 * r3) * tw * depth
+        ctx.beginPath(); ctx.arc(ex, ey, pSize, 0, Math.PI * 2)
+        ctx.fillStyle = heat > 0.60 ? (bhActive ? '#fff5cc' : '#ffd050')
+                     : heat > 0.28 ? (bhActive ? '#ffaa28' : '#ff7010')
+                     :                (bhActive ? '#ff4c0c' : '#b83208')
+        ctx.fill()
+      }
+      ctx.globalAlpha = 1
       ctx.restore()
-      ctx.save(); ctx.translate(bhX, bhY); ctx.rotate(spin + Math.PI * 0.6)
-      ctx.beginPath()
-      ctx.ellipse(0, 0, BH_R * 1.05, BH_R * 0.22, 0, 0, Math.PI * 2)
-      ctx.strokeStyle = bhActive ? 'rgba(255,120,20,0.50)' : 'rgba(200,70,0,0.28)'
-      ctx.lineWidth = 1.5; ctx.stroke()
-      ctx.restore()
-      // Dark singularity with photon ring
+      // Spaghettification — stretch trail from dragging node toward BH
+      if (bhHover && draggingNode) {
+        const [_sx, _sy] = toScreen(draggingNode.x, draggingNode.y, draggingNode.z || 0)
+        const _nr = Math.max((draggingNode.size || 7) * view.scale, 4)
+        for (let _si = 1; _si <= 10; _si++) {
+          const _f = _si / 10
+          const _tx = _sx + (bhX - _sx) * _f * 0.65
+          const _ty = _sy + (bhY - _sy) * _f * 0.65
+          ctx.globalAlpha = (1 - _f) * 0.32
+          ctx.beginPath(); ctx.arc(_tx, _ty, _nr * (1 - _f * 0.55), 0, Math.PI * 2)
+          ctx.fillStyle = 'rgba(255,160,30,1)'; ctx.fill()
+        }
+        ctx.globalAlpha = 1
+      }
+      // Dark singularity
       ctx.beginPath(); ctx.arc(bhX, bhY, BH_R * 0.62, 0, Math.PI * 2)
       ctx.fillStyle = '#000'; ctx.fill()
-      ctx.strokeStyle = bhActive ? 'rgba(255,200,70,1)' : 'rgba(255,160,30,0.80)'
-      ctx.lineWidth = bhActive ? 2.5 : 2; ctx.stroke()
+      // Photon ring glow — layered thin strokes for soft halo
+      const ringPulse = 0.75 + 0.25 * Math.sin(t * 1.2)
+      ctx.beginPath(); ctx.arc(bhX, bhY, BH_R * 0.62, 0, Math.PI * 2)
+      ctx.strokeStyle = bhActive ? `rgba(255,240,180,${(0.12 * ringPulse).toFixed(3)})` : `rgba(255,210,120,${(0.08 * ringPulse).toFixed(3)})`
+      ctx.lineWidth = 5; ctx.stroke()
+      ctx.beginPath(); ctx.arc(bhX, bhY, BH_R * 0.62, 0, Math.PI * 2)
+      ctx.strokeStyle = bhActive ? `rgba(255,255,220,${(0.55 * ringPulse).toFixed(3)})` : `rgba(255,200,80,${(0.38 * ringPulse).toFixed(3)})`
+      ctx.lineWidth = 0.8; ctx.stroke()
+      // Gravitational pulse rings
+      if (bhPulseStartT !== null) {
+        const _pe = t - bhPulseStartT
+        if (_pe < 1.4) {
+          for (let _ri = 0; _ri < 3; _ri++) {
+            const _re = _pe - _ri * 0.22; if (_re <= 0) continue
+            const _rp = Math.min(_re / 0.9, 1)
+            ctx.beginPath(); ctx.arc(bhX, bhY, BH_R * (1.2 + _rp * 4.5), 0, Math.PI * 2)
+            ctx.strokeStyle = `rgba(255,170,40,${((1 - _rp) * 0.55).toFixed(3)})`
+            ctx.lineWidth = 1.2; ctx.stroke()
+          }
+        } else { bhPulseStartT = null }
+      }
       // Label
       ctx.font = bhActive ? 'bold 10px -apple-system, sans-serif' : '9px -apple-system, sans-serif'
       ctx.fillStyle = bhActive ? 'rgba(255,210,80,0.95)' : 'rgba(220,130,30,0.55)'
       ctx.textAlign = 'center'
       ctx.fillText(bhActive ? '⬤ Archive' : 'Archive', bhX, bhY + BH_R + 15)
+      // Archive count badge
+      const _archCount = files.filter(f => f.folder?.split('/')[0] === 'Archive').length
+      if (_archCount > 0) {
+        const _bx = bhX + BH_R * 0.74, _by = bhY - BH_R * 0.74
+        ctx.beginPath(); ctx.arc(_bx, _by, 8, 0, Math.PI * 2)
+        ctx.fillStyle = 'rgba(255,140,30,0.92)'; ctx.fill()
+        ctx.font = 'bold 8px -apple-system, sans-serif'; ctx.fillStyle = '#000'
+        ctx.textBaseline = 'middle'
+        ctx.fillText(String(_archCount), _bx, _by)
+        ctx.textBaseline = 'alphabetic'
+      }
     }
 
     let running = true, frame = 0
@@ -749,6 +919,13 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
     function loop() {
       if (!running) return
       simulate(); draw(); frame++
+      // After ~60 frames of simulation post vault-switch, fit the view to the
+      // spread-out nodes. This fires from inside the loop so it's immune to
+      // isLoading / file-watcher cycles cancelling the 900ms setTimeout.
+      if (pendingVaultFitRef.current && frame >= 60) {
+        pendingVaultFitRef.current = false
+        if (recenterRef.current) recenterRef.current()
+      }
       animRef.current = requestAnimationFrame(loop)
     }
 
@@ -769,8 +946,11 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
     let mouseDownX = 0, mouseDownY = 0
     // Black hole — fixed screen-space position, updated each draw call
     let bhX = 0, bhY = 0
-    const BH_R = 32
-    let bhHover = false  // true while dragging a node over the black hole
+    const BH_R = 35
+    let bhHover = false         // true while dragging a node over the black hole
+    let bhCursorHover = false   // true when cursor is over BH without dragging
+    let bhSpeedCurrent = 0.359  // lerps toward target for smooth speed ramp
+    let bhPulseStartT = null    // gravitational pulse animation start time
 
     // Wrap draw to also highlight drop target
     const drawWithDropTarget = () => {
@@ -860,6 +1040,7 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
 
         // Black hole proximity check
         bhHover = Math.hypot(cx - bhX, cy - bhY) < BH_R * 1.6
+        bhCursorHover = false
         // Find a topic hub under cursor (skip if hovering black hole)
         const under = bhHover ? null : hitTest(cx, cy, draggingNode)
         dropTarget = (under && under.isTheme && !under.isJournal && !under.isTag) ? under : null
@@ -871,6 +1052,7 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
         draw()
         setHoveredNodeRef.current(null)
       } else {
+        bhCursorHover = Math.hypot(cx - bhX, cy - bhY) < BH_R * 1.8
         setHoveredNodeRef.current(hitTest(cx, cy) || null)
       }
       const { sx: _csx, sy: _csy, r: _csr } = centerStarRef.current
@@ -914,12 +1096,24 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
     }
     document.addEventListener('mouseup', handleMouseUp)
 
+    canvas.addEventListener('contextmenu', e => {
+      e.preventDefault()
+      const [cx, cy] = getCanvasXY(e)
+      if (Math.hypot(cx - bhX, cy - bhY) < BH_R * 1.5) setBhCtxMenuRef.current({ x: e.clientX, y: e.clientY })
+    }, sig)
+
     canvas.addEventListener('click', e => {
       const [cx, cy] = getCanvasXY(e)
       // Suppress click if the mouse moved significantly — it was a drag, not a tap.
       // Using position delta avoids the race where handleMouseUp clears isDragging
       // before the click event fires (mouseup always precedes click in the event order).
       if (Math.abs(cx - mouseDownX) > 4 || Math.abs(cy - mouseDownY) > 4) return
+      // BH click → pulse + open archive panel
+      if (Math.hypot(cx - bhX, cy - bhY) < BH_R * 1.5) {
+        bhPulseStartT = performance.now() * 0.001
+        setBhArchiveOpenRef.current(true)
+        return
+      }
       // Center star hit — open galaxy view
       const { sx: csx, sy: csy, r: csr } = centerStarRef.current
       if ((cx - csx) ** 2 + (cy - csy) ** 2 < csr * csr) {
@@ -1039,7 +1233,7 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
       {/* Floating top-left label — hidden when another panel overlays the graph */}
       {!hasOverlay && (
         <div className="absolute top-3 left-3" style={{ zIndex: 10 }}>
-          <span className="text-sm font-medium tracking-wide" style={{ color: 'rgba(255,255,255,0.28)' }}>Home Panel</span>
+          <span className="text-sm font-medium tracking-wide" style={{ color: 'rgba(255,255,255,0.28)' }}>Home</span>
         </div>
       )}
 
@@ -1271,6 +1465,26 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
                   onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
                 >Archive topic</button>
               )}
+              {!node._archived && node.isTheme && !node.isJournal && !node.isTag && onMoveTopic && spaceGroups.length > 0 && (
+                <button
+                  onClick={async () => {
+                    setCtxMenu(null)
+                    const norm = p => p.replace(/\\/g, '/')
+                    const groups = []
+                    for (const group of spaceGroups) {
+                      const result = await window.electronAPI.listSpaces(group.path)
+                      if (!result.success) continue
+                      const spaces = result.spaces.filter(s => norm(s.path) !== norm(vaultPath))
+                      if (spaces.length > 0) groups.push({ groupName: group.name, spaces })
+                    }
+                    setAvailableSpaces(groups)
+                    setMoveToSpaceModal({ topicFolder: node._topicFolder, topicName: node.label })
+                  }}
+                  style={{ ...btnBase, color: 'var(--text-muted)' }}
+                  onMouseEnter={e => e.currentTarget.style.background = 'var(--glass-bg-strong)'}
+                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                >Move to Space…</button>
+              )}
               {!node._archived && !node.isTheme && !node.isTag && !node.isJournal && file && onArchiveFile && (
                 <button
                   onClick={() => { setCtxMenu(null); onArchiveFile(file) }}
@@ -1304,44 +1518,206 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
         {/* No backdrop — closing is handled by document mousedown listener above */}
       </div>
 
+      {/* BH right-click context menu */}
+      {bhCtxMenu && (
+        <div
+          style={{ position:'fixed', left:bhCtxMenu.x, top:bhCtxMenu.y, zIndex:400,
+            background:'var(--glass-bg-strong)', border:'1px solid rgba(255,165,40,0.22)',
+            borderRadius:10, padding:'4px 0', minWidth:160,
+            boxShadow:'0 8px 32px rgba(0,0,0,0.5)', backdropFilter:'blur(16px)', WebkitBackdropFilter:'blur(16px)' }}
+          onMouseLeave={() => setBhCtxMenu(null)}
+        >
+          {[
+            { label:'View Archive', action:() => { setBhArchiveOpen(true); setBhCtxMenu(null) } },
+            { label:'Empty Archive', action:async () => {
+              setBhCtxMenu(null)
+              const archived = files.filter(f => f.folder?.split('/')[0] === 'Archive')
+              if (!archived.length) return
+              const ok = await window.electronAPI.confirmDialog('Empty Archive?', 'This permanently deletes all archived notes. This cannot be undone.')
+              if (ok && onDeleteFiles) onDeleteFiles(archived.map(f => f.path))
+            }},
+          ].map(item => (
+            <button key={item.label} onClick={item.action}
+              style={{ display:'block', width:'100%', padding:'8px 14px', background:'none', border:'none',
+                cursor:'pointer', fontSize:12, color:'rgba(255,220,140,0.85)', textAlign:'left' }}
+              onMouseEnter={e => e.currentTarget.style.background='rgba(255,140,30,0.14)'}
+              onMouseLeave={e => e.currentTarget.style.background='none'}
+            >{item.label}</button>
+          ))}
+        </div>
+      )}
+
+      {/* BH archive panel */}
+      {bhArchiveOpen && (() => {
+        const archivedFiles  = files.filter(f => f.folder?.split('/')[0] === 'Archive')
+        const archivedTopics = [...new Set(archivedFiles.map(f => f.folder?.split('/')[1]).filter(Boolean))]
+        return (
+          <div className="absolute inset-0 flex items-center justify-center"
+            style={{ zIndex:200, background:'rgba(0,0,0,0.72)', backdropFilter:'blur(8px)' }}>
+            <div style={{ background:'var(--glass-bg-strong)', border:'1px solid rgba(255,165,40,0.22)',
+              borderRadius:16, padding:'22px 26px', maxWidth:400, width:'90%', maxHeight:'72vh',
+              display:'flex', flexDirection:'column', gap:14,
+              boxShadow:'0 8px 48px rgba(0,0,0,0.6), 0 0 24px rgba(255,140,30,0.10)',
+              backdropFilter:'blur(20px)', WebkitBackdropFilter:'blur(20px)' }}>
+              <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+                <span style={{ fontSize:13, fontWeight:600, color:'rgba(255,215,135,0.95)' }}>
+                  ⬤ Archive {archivedFiles.length > 0 && <span style={{ fontSize:11, opacity:0.6 }}>({archivedFiles.length})</span>}
+                </span>
+                <button onClick={() => setBhArchiveOpen(false)}
+                  style={{ background:'none', border:'none', cursor:'pointer', color:'var(--text-muted)', fontSize:15 }}>✕</button>
+              </div>
+              {archivedFiles.length === 0
+                ? <p style={{ fontSize:12, color:'var(--text-dim)', textAlign:'center', padding:'12px 0' }}>Nothing archived yet</p>
+                : <div style={{ overflowY:'auto', display:'flex', flexDirection:'column', gap:6, maxHeight:'calc(72vh - 120px)' }}>
+                    {archivedTopics.map(topic => (
+                      <div key={topic} style={{ display:'flex', alignItems:'center', justifyContent:'space-between',
+                        padding:'7px 11px', borderRadius:8, background:'var(--glass-bg)', border:'1px solid var(--glass-border)' }}>
+                        <span style={{ fontSize:12, color:'var(--text-primary)' }}>📁 {topic}</span>
+                        {onUnarchiveTopic && (
+                          <button onClick={() => onUnarchiveTopic(topic)}
+                            style={{ padding:'3px 10px', borderRadius:6, fontSize:11, cursor:'pointer',
+                              background:'rgba(255,140,30,0.18)', border:'1px solid rgba(255,140,30,0.35)', color:'rgba(255,200,80,0.9)' }}
+                            onMouseEnter={e => e.currentTarget.style.background='rgba(255,140,30,0.32)'}
+                            onMouseLeave={e => e.currentTarget.style.background='rgba(255,140,30,0.18)'}
+                          >Restore</button>
+                        )}
+                      </div>
+                    ))}
+                    {archivedFiles.filter(f => !f.folder?.split('/')[1]).map(file => (
+                      <div key={file.path} style={{ display:'flex', alignItems:'center', justifyContent:'space-between',
+                        padding:'7px 11px', borderRadius:8, background:'var(--glass-bg)', border:'1px solid var(--glass-border)' }}>
+                        <span style={{ fontSize:12, color:'var(--text-muted)' }}>📄 {file.name}</span>
+                        {onUnarchiveFile && (
+                          <button onClick={() => onUnarchiveFile(file)}
+                            style={{ padding:'3px 10px', borderRadius:6, fontSize:11, cursor:'pointer',
+                              background:'rgba(255,140,30,0.18)', border:'1px solid rgba(255,140,30,0.35)', color:'rgba(255,200,80,0.9)' }}
+                            onMouseEnter={e => e.currentTarget.style.background='rgba(255,140,30,0.32)'}
+                            onMouseLeave={e => e.currentTarget.style.background='rgba(255,140,30,0.18)'}
+                          >Restore</button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+              }
+              <div style={{ display:'flex', justifyContent:'flex-end', gap:8, paddingTop:4, borderTop:'1px solid var(--glass-border)' }}>
+                <button onClick={async () => {
+                  if (!archivedFiles.length) return
+                  const ok = await showConfirmRef.current('Empty Archive?', 'This permanently deletes all archived notes. This cannot be undone.')
+                  if (ok && onDeleteFiles) { onDeleteFiles(archivedFiles.map(f => f.path)); setBhArchiveOpen(false) }
+                }}
+                  style={{ padding:'5px 14px', borderRadius:8, fontSize:11, cursor:'pointer',
+                    background:'rgba(220,40,40,0.15)', border:'1px solid rgba(220,40,40,0.28)', color:'rgba(255,90,70,0.8)' }}
+                  onMouseEnter={e => e.currentTarget.style.background='rgba(220,40,40,0.28)'}
+                  onMouseLeave={e => e.currentTarget.style.background='rgba(220,40,40,0.15)'}
+                >Empty Archive</button>
+                <button onClick={() => setBhArchiveOpen(false)}
+                  style={{ padding:'5px 14px', borderRadius:8, fontSize:11, cursor:'pointer',
+                    background:'var(--glass-bg)', border:'1px solid var(--glass-border)', color:'var(--text-muted)' }}
+                  onMouseEnter={e => e.currentTarget.style.background='var(--glass-bg-strong)'}
+                  onMouseLeave={e => e.currentTarget.style.background='var(--glass-bg)'}
+                >Done</button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
+
+      {/* Move to Space modal */}
+      {moveToSpaceModal && (
+        <div
+          className="absolute inset-0 flex items-center justify-center"
+          style={{ zIndex: 300, background: 'rgba(0,0,12,0.72)', backdropFilter: 'blur(6px)' }}
+        >
+          <div style={{
+            background: 'rgba(8,6,20,0.97)', border: '1px solid rgba(255,165,40,0.22)',
+            borderRadius: 16, padding: '22px 24px', maxWidth: 340, width: '90%', maxHeight: '70vh',
+            display: 'flex', flexDirection: 'column', gap: 14,
+            boxShadow: '0 8px 48px rgba(0,0,0,0.7), 0 0 32px rgba(255,140,30,0.10)',
+          }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <span style={{ fontSize: 14, fontWeight: 600, color: 'rgba(255,215,135,0.95)' }}>
+                Move &ldquo;{moveToSpaceModal.topicName}&rdquo; to Space
+              </span>
+              <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)' }}>Select a destination space</span>
+            </div>
+            <div style={{ overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 'calc(70vh - 130px)' }}>
+              {availableSpaces.length === 0
+                ? <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.3)', textAlign: 'center', padding: '8px 0' }}>No other spaces available</p>
+                : availableSpaces.map(group => (
+                    <div key={group.groupName}>
+                      <div style={{ fontSize: 10, fontWeight: 600, color: 'rgba(255,255,255,0.28)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4 }}>
+                        {group.groupName}
+                      </div>
+                      {group.spaces.map(space => (
+                        <button key={space.path}
+                          onClick={async () => {
+                            const modal = moveToSpaceModal
+                            setMoveToSpaceModal(null)
+                            await onMoveTopic(modal.topicFolder, space.path)
+                          }}
+                          style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px',
+                            borderRadius: 8, fontSize: 12, cursor: 'pointer',
+                            background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)',
+                            color: 'rgba(255,255,255,0.72)', marginBottom: 4, transition: 'all 0.15s' }}
+                          onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,140,30,0.14)'; e.currentTarget.style.borderColor = 'rgba(255,140,30,0.30)'; e.currentTarget.style.color = 'rgba(255,200,80,0.95)' }}
+                          onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.07)'; e.currentTarget.style.color = 'rgba(255,255,255,0.72)' }}
+                        >{space.name}</button>
+                      ))}
+                    </div>
+                  ))
+              }
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', paddingTop: 4, borderTop: '1px solid rgba(255,255,255,0.07)' }}>
+              <button onClick={() => setMoveToSpaceModal(null)}
+                style={{ padding: '7px 18px', borderRadius: 8, fontSize: 12, cursor: 'pointer',
+                  background: 'transparent', border: '1px solid rgba(255,255,255,0.10)',
+                  color: 'rgba(255,255,255,0.42)', transition: 'all 0.15s' }}
+                onMouseEnter={e => { e.currentTarget.style.color = 'rgba(255,255,255,0.75)'; e.currentTarget.style.background = 'rgba(255,255,255,0.06)' }}
+                onMouseLeave={e => { e.currentTarget.style.color = 'rgba(255,255,255,0.42)'; e.currentTarget.style.background = 'transparent' }}
+              >Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* In-app confirm modal — replaces native OS dialog */}
       {confirmModal && (
         <div
           className="absolute inset-0 flex items-center justify-center"
-          style={{ zIndex: 100, background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(4px)' }}
+          style={{ zIndex: 100, background: 'rgba(0,0,12,0.72)', backdropFilter: 'blur(6px)' }}
         >
           <div
-            className="flex flex-col gap-4 rounded-xl px-6 py-5"
             style={{
-              background: 'var(--glass-bg-strong)',
-              border: '1px solid var(--glass-border-strong)',
-              boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
-              backdropFilter: 'blur(20px)',
-              WebkitBackdropFilter: 'blur(20px)',
-              minWidth: 300, maxWidth: 400,
+              background: 'rgba(8,6,20,0.95)', border: '1px solid rgba(255,165,40,0.22)',
+              borderRadius: 14, padding: '22px 26px', maxWidth: 340, width: '90%',
+              display: 'flex', flexDirection: 'column', gap: 16,
+              boxShadow: '0 8px 48px rgba(0,0,0,0.7), 0 0 32px rgba(255,140,30,0.10)',
             }}
           >
-            <div className="flex flex-col gap-1.5">
-              <span className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+              <span style={{ fontSize: 14, fontWeight: 600, color: 'rgba(255,215,135,0.95)' }}>
                 {confirmModal.title}
               </span>
-              <span className="text-xs leading-relaxed" style={{ color: 'var(--text-muted)', whiteSpace: 'pre-line' }}>
+              <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.42)', lineHeight: 1.55, whiteSpace: 'pre-line' }}>
                 {confirmModal.message}
               </span>
             </div>
-            <div className="flex items-center justify-end gap-2">
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
               <button
                 onClick={() => { setConfirmModal(null); confirmResolveRef.current?.(false) }}
-                className="px-3 py-1.5 rounded-md text-xs transition-all duration-150"
-                style={{ background: 'transparent', border: '1px solid var(--glass-border)', color: 'var(--text-muted)' }}
-                onMouseEnter={e => { e.currentTarget.style.color = 'var(--text-primary)'; e.currentTarget.style.background = 'var(--glass-bg)' }}
-                onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.background = 'transparent' }}
+                style={{ padding: '7px 18px', borderRadius: 8, fontSize: 12, cursor: 'pointer',
+                  background: 'transparent', border: '1px solid rgba(255,255,255,0.10)',
+                  color: 'rgba(255,255,255,0.42)', transition: 'all 0.15s' }}
+                onMouseEnter={e => { e.currentTarget.style.color = 'rgba(255,255,255,0.75)'; e.currentTarget.style.background = 'rgba(255,255,255,0.06)' }}
+                onMouseLeave={e => { e.currentTarget.style.color = 'rgba(255,255,255,0.42)'; e.currentTarget.style.background = 'transparent' }}
               >Cancel</button>
               <button
                 onClick={() => { setConfirmModal(null); confirmResolveRef.current?.(true) }}
-                className="px-3 py-1.5 rounded-md text-xs font-medium transition-all duration-150"
-                style={{ background: 'var(--accent-gradient)', color: '#fff', border: '1px solid transparent', boxShadow: '0 1px 6px var(--accent-glow)' }}
-                onMouseEnter={e => e.currentTarget.style.opacity = '0.88'}
+                style={{ padding: '7px 18px', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                  background: 'linear-gradient(135deg,rgba(255,155,35,0.92),rgba(215,85,0,0.92))',
+                  color: '#fff', border: '1px solid rgba(255,165,40,0.35)',
+                  boxShadow: '0 2px 12px rgba(255,120,0,0.32)', transition: 'opacity 0.15s' }}
+                onMouseEnter={e => e.currentTarget.style.opacity = '0.82'}
                 onMouseLeave={e => e.currentTarget.style.opacity = '1'}
               >Confirm</button>
             </div>

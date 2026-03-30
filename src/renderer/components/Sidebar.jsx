@@ -331,6 +331,7 @@ export default function Sidebar({
   showFileExplorer, onToggleFileExplorer,
   showNotes, onShowNotes, theme, onSetTheme, onMoveFile,
   onArchiveTopic, onUnarchiveTopic, onArchiveFile, revealFolder,
+  spaceGroups = [], onMoveTopic,
 }) {
   const [createMode, setCreateMode] = useState(null)
   const [newThemeName, setNewThemeName] = useState('')
@@ -345,6 +346,8 @@ export default function Sidebar({
     confirmResolveRef.current = resolve
     setConfirmModal({ title, message })
   })
+  const [moveToSpaceModal, setMoveToSpaceModal] = useState(null) // { folder, folderName }
+  const [availableSpaces, setAvailableSpaces] = useState([]) // [{ groupName, spaces: [{name,path}] }]
   const [search, setSearch] = useState('')
   const [collapsed, setCollapsed] = useState({})
   const [noteOrder, setNoteOrder] = useState(() => {
@@ -529,6 +532,24 @@ export default function Sidebar({
     }
     setContextMenu(null)
   }, [contextMenu, onDeleteFile, onDeleteTopic])
+
+  const handleOpenMoveToSpace = useCallback(async () => {
+    if (!contextMenu?.folder) return
+    const folder = contextMenu.folder
+    const folderName = contextMenu.folderName || folder.split('/').pop()
+    setContextMenu(null)
+    // Load spaces from all space groups, excluding the current vault
+    const norm = p => p.replace(/\\/g, '/')
+    const groups = []
+    for (const group of spaceGroups) {
+      const result = await window.electronAPI.listSpaces(group.path)
+      if (!result.success) continue
+      const spaces = result.spaces.filter(s => norm(s.path) !== norm(vaultPath))
+      if (spaces.length > 0) groups.push({ groupName: group.name, spaces })
+    }
+    setAvailableSpaces(groups)
+    setMoveToSpaceModal({ folder, folderName })
+  }, [contextMenu, spaceGroups, vaultPath])
 
   const handleArchive = useCallback(async () => {
     if (!contextMenu) return
@@ -894,7 +915,7 @@ export default function Sidebar({
         </span>
         <div className="flex items-center gap-1">
           {[
-            {ic:<IcGraph/>,       act:showGraph,       fn:onToggleGraph,      t:'Home Panel'},
+            {ic:<IcGraph/>,       act:showGraph,       fn:onToggleGraph,      t:'Home'},
             {ic:<IcFile/>,        act:showNotes,       fn:onShowNotes,        t:'Notes Panel'},
             {ic:<IcAI/>,          act:showAI,          fn:onToggleAI,         t:'Context Panel'},
             {ic:<IcWhiteboard/>,  act:showWhiteboard,  fn:onToggleWhiteboard, t:'Whiteboard Panel'},
@@ -935,6 +956,13 @@ export default function Sidebar({
               onMouseEnter={e => e.currentTarget.style.background = 'var(--glass-bg-strong)'}
               onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
             >Archive Topic</button>
+          )}
+          {contextMenu.folder && onMoveTopic && spaceGroups.length > 0 && (
+            <button onClick={handleOpenMoveToSpace} className="w-full text-left px-3 py-1.5 text-sm transition-colors"
+              style={{ color: 'var(--text-muted)' }}
+              onMouseEnter={e => e.currentTarget.style.background = 'var(--glass-bg-strong)'}
+              onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+            >Move to Space…</button>
           )}
           {!contextMenu.folder && contextMenu.file && onArchiveFile && (
             <button onClick={handleArchive} className="w-full text-left px-3 py-1.5 text-sm transition-colors"
@@ -998,6 +1026,63 @@ export default function Sidebar({
                 onMouseEnter={e => e.currentTarget.style.opacity = '0.88'}
                 onMouseLeave={e => e.currentTarget.style.opacity = '1'}
               >Confirm</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Move to Space modal */}
+      {moveToSpaceModal && (
+        <div className="absolute inset-0 flex items-center justify-center"
+          style={{ zIndex: 300, background: 'rgba(0,0,12,0.72)', backdropFilter: 'blur(6px)' }}>
+          <div style={{
+            background: 'rgba(8,6,20,0.97)', border: '1px solid rgba(255,165,40,0.22)',
+            borderRadius: 16, padding: '22px 24px', maxWidth: 340, width: '90%', maxHeight: '70vh',
+            display: 'flex', flexDirection: 'column', gap: 14,
+            boxShadow: '0 8px 48px rgba(0,0,0,0.7), 0 0 32px rgba(255,140,30,0.10)',
+          }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <span style={{ fontSize: 14, fontWeight: 600, color: 'rgba(255,215,135,0.95)' }}>
+                Move &ldquo;{moveToSpaceModal.folderName}&rdquo; to Space
+              </span>
+              <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)' }}>
+                Select a destination space
+              </span>
+            </div>
+            <div style={{ overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 'calc(70vh - 130px)' }}>
+              {availableSpaces.length === 0
+                ? <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.3)', textAlign: 'center', padding: '8px 0' }}>No other spaces available</p>
+                : availableSpaces.map(group => (
+                    <div key={group.groupName}>
+                      <div style={{ fontSize: 10, fontWeight: 600, color: 'rgba(255,255,255,0.28)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4 }}>
+                        {group.groupName}
+                      </div>
+                      {group.spaces.map(space => (
+                        <button key={space.path}
+                          onClick={async () => {
+                            setMoveToSpaceModal(null)
+                            await onMoveTopic(moveToSpaceModal.folder, space.path)
+                          }}
+                          style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px',
+                            borderRadius: 8, fontSize: 12, cursor: 'pointer',
+                            background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)',
+                            color: 'rgba(255,255,255,0.72)', marginBottom: 4, transition: 'all 0.15s' }}
+                          onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,140,30,0.14)'; e.currentTarget.style.borderColor = 'rgba(255,140,30,0.30)'; e.currentTarget.style.color = 'rgba(255,200,80,0.95)' }}
+                          onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.07)'; e.currentTarget.style.color = 'rgba(255,255,255,0.72)' }}
+                        >{space.name}</button>
+                      ))}
+                    </div>
+                  ))
+              }
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', paddingTop: 4, borderTop: '1px solid rgba(255,255,255,0.07)' }}>
+              <button onClick={() => setMoveToSpaceModal(null)}
+                style={{ padding: '7px 18px', borderRadius: 8, fontSize: 12, cursor: 'pointer',
+                  background: 'transparent', border: '1px solid rgba(255,255,255,0.10)',
+                  color: 'rgba(255,255,255,0.42)', transition: 'all 0.15s' }}
+                onMouseEnter={e => { e.currentTarget.style.color = 'rgba(255,255,255,0.75)'; e.currentTarget.style.background = 'rgba(255,255,255,0.06)' }}
+                onMouseLeave={e => { e.currentTarget.style.color = 'rgba(255,255,255,0.42)'; e.currentTarget.style.background = 'transparent' }}
+              >Cancel</button>
             </div>
           </div>
         </div>

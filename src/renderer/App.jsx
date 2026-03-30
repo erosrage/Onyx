@@ -280,6 +280,19 @@ export default function App() {
     if (result.success) await loadVault()
   }, [vaultPath, loadVault])
 
+  const handleMoveTopic = useCallback(async (folderRelPath, targetSpacePath) => {
+    const topicName = folderRelPath.split('/').pop()
+    const src = `${vaultPath}/${folderRelPath}`
+    const dst = `${targetSpacePath}/${topicName}`
+    const result = await window.electronAPI.renameFile(src, dst)
+    if (result.success) {
+      if (activeFile?.folder === folderRelPath || activeFile?.folder?.startsWith(folderRelPath + '/')) {
+        setActiveFile(null)
+      }
+      await loadVault()
+    }
+  }, [vaultPath, loadVault, activeFile])
+
   const handleDeleteTopic = useCallback(async (folderRelPath) => {
     const folderPath = `${vaultPath}/${folderRelPath}`
     const result = await window.electronAPI.deleteFolder(folderPath)
@@ -412,6 +425,8 @@ export default function App() {
               theme={theme}
               onSetTheme={applyTheme}
               onMoveFile={handleMoveFile}
+              onMoveTopic={handleMoveTopic}
+              spaceGroups={spaceGroups}
               onArchiveTopic={handleArchiveTopic}
               onUnarchiveTopic={handleUnarchiveTopic}
               onArchiveFile={handleArchiveFile}
@@ -461,6 +476,8 @@ export default function App() {
                     if (paths.includes(activeFile?.path)) setActiveFile(null)
                   }}
                   onMoveFile={handleMoveFile}
+                  onMoveTopic={handleMoveTopic}
+                  spaceGroups={spaceGroups}
                 />
               </div>
             )}

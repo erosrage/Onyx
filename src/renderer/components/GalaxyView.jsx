@@ -38,33 +38,86 @@ function orbitRings(name) {
   }))
 }
 
-// ─── Background star field ────────────────────────────────────────────────────
-const _BGS_CLUSTERS = [[18,25],[50,15],[80,30],[30,60],[65,50],[85,75],[10,80],[55,85],[40,35],[72,18]]
-const BG_STARS = Array.from({ length: 280 }, (_, i) => {
-  const hx = _wh(i*3+1), hy = _wh(i*3+2), hm = _wh(i*3+3)
-  let x, y
-  if (i < 196) {
-    const [cx, cy] = _BGS_CLUSTERS[i % _BGS_CLUSTERS.length]
-    x = cx + ((hx % 36000) / 1000 - 18); y = cy + ((hy % 28000) / 1000 - 14)
-  } else { x = (hx % 98000) / 1000 + 1; y = (hy % 96000) / 1000 + 2 }
-  return {
-    x: Math.max(0.3, Math.min(99.7, x)) / 100,
-    y: Math.max(0.3, Math.min(99.7, y)) / 100,
-    r:     0.06 + (hm % 7) / 24,
-    delay: (_wh(i*5+4) % 3200) / 1000,
-    dur:   1.8 + (_wh(i*7+6) % 3000) / 1000,
-    op:    0.08 + (_wh(i*11+9) % 380) / 2000,
-    // drift params — Lissajous float
-    dax: ((_wh(i*17+10) % 800) - 400) / 400,
-    day: ((_wh(i*17+11) % 600) - 300) / 300,
-    dtx: 22 + (_wh(i*17+12) % 44),
-    dty: 20 + (_wh(i*17+13) % 40),
-    dpx: (_wh(i*17+14) % 6283) / 1000,
-    dpy: (_wh(i*17+15) % 6283) / 1000,
+// ─── Milky Way star field ─────────────────────────────────────────────────────
+// Band angle ≈ -32°. 65% of stars concentrated along the MW band using rotated
+// band-local coordinates; remaining 35% scattered across the whole canvas.
+const _MW_A   = -Math.PI * 0.178          // band tilt
+const _MW_COS = Math.cos(_MW_A)
+const _MW_SIN = Math.sin(_MW_A)
+
+const MW_BG_STARS = Array.from({ length: 720 }, (_, i) => {
+  const h1 = _wh(i*17+1), h2 = _wh(i*17+2), h3 = _wh(i*17+3)
+  const h4 = _wh(i*17+4), h5 = _wh(i*17+5), h6 = _wh(i*17+6)
+  let nx, ny
+  const inBand = i < 468  // 65 %
+  if (inBand) {
+    const along  = (h1 % 100000) / 100000 - 0.5              // –0.5 … 0.5
+    const across = ((h2 % 10000) / 5000 - 1 + (h3 % 10000) / 5000 - 1) * 0.065   // Gaussian ≈ ±0.13
+    nx = 0.50 + along * 1.65 * _MW_COS - across * _MW_SIN
+    ny = 0.45 + along * 1.65 * _MW_SIN + across * _MW_COS
+  } else {
+    nx = (h1 % 100000) / 100000
+    ny = (h2 % 100000) / 100000
   }
+  // Size: tiny (68 %), small (22 %), medium (7 %), large/bright (3 %)
+  const sc   = h4 % 1000
+  const size = sc < 680 ? 0.20 + (h5 % 10) / 22
+             : sc < 900 ? 0.52 + (h5 % 10) / 14
+             : sc < 970 ? 0.88 + (h5 % 12) / 11
+             : 1.45 + (h5 % 14) / 8
+  const bMul = inBand ? 1.45 : 1.0
+  const op   = (sc < 680 ? 0.042 + (h6 % 120) / 2800
+              : sc < 900 ? 0.115 + (h6 % 170) / 1500
+              : sc < 970 ? 0.250 + (h6 % 180) / 900
+              : 0.500 + (h6 % 200) / 700) * bMul
+  // Spectral color — hot blue-white through orange-red
+  const ct  = _wh(i*13+7) % 100
+  const col = ct < 32 ? '#ffffff'    // white A-type
+            : ct < 58 ? '#c2daff'    // blue-white B-type (dominant, matches imagery)
+            : ct < 70 ? '#e8f2ff'    // pale blue-white
+            : ct < 78 ? '#94b8ff'    // bright blue O-type
+            : ct < 87 ? '#fffaf4'    // warm white F/G-type
+            : ct < 93 ? '#ffd49a'    // orange K-type
+            : '#ffb87a'              // red-orange M-type
+  // Twinkle + drift params
+  const tDur  = 1.4 + (_wh(i*7+9)  % 3200) / 1000
+  const tPhase = (_wh(i*7+10) % 6283) / 1000
+  const dax  = ((_wh(i*19+11) % 800) - 400) / 400
+  const day  = ((_wh(i*19+12) % 600) - 300) / 300
+  const dtx  = 18 + (_wh(i*19+13) % 40)
+  const dty  = 16 + (_wh(i*19+14) % 38)
+  const dpx  = (_wh(i*19+15) % 6283) / 1000
+  const dpy  = (_wh(i*19+16) % 6283) / 1000
+  return { nx, ny, size, op, col, tDur, tPhase, dax, day, dtx, dty, dpx, dpy }
 })
 
 
+
+// Nebula clouds — 10 overlapping gradient ellipses, no blur filter
+// Drawn each frame from normalized params; actual px coords computed from W,H
+const SPACE_NEBULAS = [
+  { cx:0.42, cy:0.36, rx:0.44, ry:0.27, rot: 0.15, r:28,  g:168, b:205, op:0.115 }, // teal — dominant
+  { cx:0.62, cy:0.50, rx:0.40, ry:0.26, rot:-0.10, r:112, g:40,  b:188, op:0.105 }, // violet
+  { cx:0.78, cy:0.28, rx:0.30, ry:0.21, rot: 0.22, r:198, g:38,  b:150, op:0.090 }, // magenta
+  { cx:0.82, cy:0.70, rx:0.28, ry:0.20, rot:-0.15, r:205, g:85,  b:28,  op:0.098 }, // warm orange
+  { cx:0.15, cy:0.52, rx:0.34, ry:0.25, rot: 0.05, r:38,  g:70,  b:198, op:0.098 }, // deep blue
+  { cx:0.58, cy:0.18, rx:0.24, ry:0.17, rot: 0.30, r:40,  g:210, b:228, op:0.078 }, // cyan
+  { cx:0.20, cy:0.72, rx:0.30, ry:0.21, rot:-0.20, r:50,  g:36,  b:182, op:0.098 }, // indigo
+  { cx:0.28, cy:0.36, rx:0.26, ry:0.18, rot: 0.10, r:150, g:48,  b:172, op:0.082 }, // purple-rose
+  { cx:0.68, cy:0.62, rx:0.24, ry:0.17, rot: 0.08, r:26,  g:188, b:148, op:0.072 }, // teal-green
+  { cx:0.50, cy:0.76, rx:0.28, ry:0.19, rot:-0.05, r:178, g:34,  b:122, op:0.080 }, // rose-violet
+]
+// Featured bright stars — halo glow + 4-point & diagonal spikes, animated twinkle
+const SPACE_BRIGHT_STARS = [
+  { nx:0.07, ny:0.09, r:2.4, col:'#9dc8ff' },
+  { nx:0.90, ny:0.11, r:2.0, col:'#b8d4ff' },
+  { nx:0.83, ny:0.83, r:1.7, col:'#ffecd0' },
+  { nx:0.13, ny:0.78, r:1.9, col:'#c0d8ff' },
+  { nx:0.53, ny:0.16, r:2.2, col:'#d0e4ff' },
+  { nx:0.93, ny:0.47, r:1.5, col:'#a8c0ff' },
+  { nx:0.37, ny:0.92, r:1.6, col:'#ffe8c0' },
+  { nx:0.72, ny:0.05, r:1.8, col:'#c8e0ff' },
+]
 
 // ─── Milky-way spiral layout ──────────────────────────────────────────────────
 function milkyWayPos(index, total) {
@@ -178,7 +231,7 @@ function drawStarNode(ctx, sx, sy, color, t) {
   ctx.fillStyle = core; ctx.fill()
 }
 
-const BH_R = 32
+const BH_R = 35
 
 // ─── Component ────────────────────────────────────────────────────────────────
 export default function GalaxyView({ spaceGroups, currentSpacePath, onSelectSpace, onClose, onLogout }) {
@@ -190,6 +243,14 @@ export default function GalaxyView({ spaceGroups, currentSpacePath, onSelectSpac
   const [draggingStar, setDraggingStar] = useState(null)
   const [ghostPos, setGhostPos]         = useState({ x: 0, y: 0 })
   const [overBH, setOverBH]             = useState(false)
+  const [archiveModal, setArchiveModal] = useState(null) // { name }
+  const archiveResolveRef               = useRef(null)
+  const [archivePanel, setArchivePanel] = useState({ open: false, items: [] })
+  const [bhCtxMenu, setBhCtxMenu]       = useState(null) // { x, y }
+  const bhCursorHoverRef = useRef(false)
+  const pulseRef         = useRef({ startT: null })
+  const bhSpeedRef       = useRef(0.359)
+  const archivedCountRef = useRef(0)
 
   const canvasRef       = useRef(null)
   const tilt            = useRef({ x: 0, y: 0 })
@@ -211,6 +272,26 @@ export default function GalaxyView({ spaceGroups, currentSpacePath, onSelectSpac
 
   useEffect(() => { spacesRef.current = spaces }, [spaces])
   useEffect(() => { flyingToRef.current = flyingTo }, [flyingTo])
+  useEffect(() => { archivedCountRef.current = archivePanel.items.length }, [archivePanel.items])
+
+  // ── Load archived spaces for badge + panel ────────────────────────────────
+  useEffect(() => {
+    if (!spaceGroups?.length) return
+    let cancelled = false
+    async function loadArchives() {
+      const archived = []
+      for (const group of spaceGroups) {
+        try {
+          const res = await window.electronAPI.listSpaces(group.path + '/Archive')
+          if (!res.success || cancelled) continue
+          for (const s of res.spaces) archived.push({ ...s, groupPath: group.path, groupName: group.name })
+        } catch { /* Archive folder may not exist yet */ }
+      }
+      if (!cancelled) setArchivePanel(p => ({ ...p, items: archived }))
+    }
+    loadArchives()
+    return () => { cancelled = true }
+  }, [spaceGroups])
 
   // ── Resize canvas to fill viewport ────────────────────────────────────────
   useEffect(() => {
@@ -324,57 +405,98 @@ export default function GalaxyView({ spaceGroups, currentSpacePath, onSelectSpac
     const dt = prevTsRef.current !== null ? Math.min((ts - prevTsRef.current) / 1000, 0.1) : 0
     prevTsRef.current = ts
     timeRef.current = t
+    // Smooth speed ramp — 3× faster when cursor hovers over BH
+    const _bhTarget = bhCursorHoverRef.current ? 1.08 : 0.359
+    bhSpeedRef.current += (_bhTarget - bhSpeedRef.current) * Math.min(dt * 4, 1)
 
     ctx.clearRect(0, 0, W, H)
 
-    // Background
-    const bg = ctx.createRadialGradient(W*0.42, H*0.58, 0, W/2, H/2, Math.max(W,H)*0.85)
-    bg.addColorStop(0, '#09091c'); bg.addColorStop(1, '#020207')
-    ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H)
+    // ── Background: deep space + nebula clouds + bright stars ────────────────
+    // Very dark blue-black base
+    ctx.fillStyle = '#000510'
+    ctx.fillRect(0, 0, W, H)
+    // Edge vignette
+    const vig = ctx.createRadialGradient(W/2, H/2, 0, W/2, H/2, Math.max(W,H)*0.72)
+    vig.addColorStop(0, 'rgba(0,0,0,0)'); vig.addColorStop(1, 'rgba(0,0,12,0.60)')
+    ctx.fillStyle = vig; ctx.fillRect(0, 0, W, H)
 
-    // Nebula clouds
-    const nebulas = [
-      { cx:0.22,cy:0.32,rx:0.28,ry:0.18,rot:-0.18, r:99, g:102,b:241, op:0.045 },
-      { cx:0.68,cy:0.62,rx:0.22,ry:0.16,rot: 0.25, r:236,g:72, b:153, op:0.038 },
-      { cx:0.48,cy:0.20,rx:0.20,ry:0.13,rot: 0.10, r:56, g:189,b:248, op:0.032 },
-      { cx:0.78,cy:0.78,rx:0.18,ry:0.14,rot:-0.30, r:74, g:222,b:128, op:0.028 },
-      { cx:0.14,cy:0.70,rx:0.16,ry:0.12,rot: 0.05, r:251,g:146,b:60,  op:0.030 },
-      { cx:0.55,cy:0.50,rx:0.25,ry:0.15,rot: 0.40, r:167,g:139,b:250, op:0.035 },
-    ]
-    nebulas.forEach(n => {
+    // 10 layered nebula clouds — soft radial gradients, no blur filter
+    SPACE_NEBULAS.forEach(n => {
       ctx.save()
       ctx.translate(n.cx*W, n.cy*H); ctx.rotate(n.rot)
       const rw = n.rx*W, rh = n.ry*H
-      const grad = ctx.createRadialGradient(0, 0, 0, 0, 0, Math.max(rw, rh))
-      grad.addColorStop(0, `rgba(${n.r},${n.g},${n.b},${n.op})`)
-      grad.addColorStop(1, `rgba(${n.r},${n.g},${n.b},0)`)
+      const ng = ctx.createRadialGradient(0, 0, 0, 0, 0, rw)
+      ng.addColorStop(0,    `rgba(${n.r},${n.g},${n.b},${n.op})`)
+      ng.addColorStop(0.38, `rgba(${n.r},${n.g},${n.b},${+(n.op*0.52).toFixed(4)})`)
+      ng.addColorStop(0.72, `rgba(${n.r},${n.g},${n.b},${+(n.op*0.14).toFixed(4)})`)
+      ng.addColorStop(1,    `rgba(${n.r},${n.g},${n.b},0)`)
       ctx.scale(1, rh/rw)
-      ctx.filter = 'blur(42px)'
       ctx.beginPath(); ctx.arc(0, 0, rw, 0, Math.PI*2)
-      ctx.fillStyle = grad; ctx.fill()
-      ctx.filter = 'none'
+      ctx.fillStyle = ng; ctx.fill()
       ctx.restore()
     })
 
-    // Background stars — drift + twinkle + subtle spikes
-    BG_STARS.forEach(s => {
-      const tw = 0.5 + 0.5 * Math.sin(2*Math.PI*t/s.dur + s.delay)
-      const dx = s.dax * 3.5 * Math.sin(t / s.dtx + s.dpx)
-      const dy = s.day * 2.8 * Math.cos(t / s.dty + s.dpy)
-      const x = s.x*W + dx, y = s.y*H + dy
-      const r = s.r * (0.85 + 0.35*tw)
-      const op = s.op * (0.25 + 0.75*tw)
+    // Central blue-white core glow
+    const cg = ctx.createRadialGradient(W*0.48, H*0.44, 0, W*0.48, H*0.44, Math.min(W,H)*0.22)
+    cg.addColorStop(0,    'rgba(148,198,255,0.16)')
+    cg.addColorStop(0.38, 'rgba(88,142,225,0.07)')
+    cg.addColorStop(0.72, 'rgba(48,80,185,0.03)')
+    cg.addColorStop(1,    'rgba(0,0,0,0)')
+    ctx.beginPath(); ctx.arc(W*0.48, H*0.44, Math.min(W,H)*0.22, 0, Math.PI*2)
+    ctx.fillStyle = cg; ctx.fill()
+
+    // Featured bright stars — halo glow + animated 4-point & diagonal spikes
+    SPACE_BRIGHT_STARS.forEach(bs => {
+      const x = bs.nx*W, y = bs.ny*H
+      const tw = 0.5 + 0.5 * Math.sin(t*1.9 + bs.nx*18.7 + bs.ny*12.3)
+      // Outer halo
+      const bsg = ctx.createRadialGradient(x, y, 0, x, y, bs.r*15)
+      bsg.addColorStop(0,    `rgba(175,215,255,${+(0.22*tw).toFixed(3)})`)
+      bsg.addColorStop(0.28, `rgba(120,172,255,${+(0.08*tw).toFixed(3)})`)
+      bsg.addColorStop(1,    'rgba(0,0,0,0)')
+      ctx.beginPath(); ctx.arc(x, y, bs.r*15, 0, Math.PI*2)
+      ctx.fillStyle = bsg; ctx.fill()
       // Core dot
+      ctx.globalAlpha = 0.78 + 0.22*tw
+      ctx.beginPath(); ctx.arc(x, y, bs.r, 0, Math.PI*2)
+      ctx.fillStyle = bs.col; ctx.fill()
+      // 4-point diffraction spikes
+      const spL = bs.r * (9 + 16*tw) * 0.4
+      ctx.globalAlpha = (0.28 + 0.44*tw) * 0.4
+      ctx.strokeStyle = bs.col; ctx.lineWidth = 0.65
+      ctx.beginPath()
+      ctx.moveTo(x-spL, y); ctx.lineTo(x+spL, y)
+      ctx.moveTo(x, y-spL); ctx.lineTo(x, y+spL)
+      ctx.stroke()
+      // Diagonal spikes (shorter)
+      const spD = spL * 0.42
+      ctx.globalAlpha = (0.28+0.44*tw) * 0.44 * 0.4
+      ctx.lineWidth = 0.42
+      ctx.beginPath()
+      ctx.moveTo(x-spD, y-spD); ctx.lineTo(x+spD, y+spD)
+      ctx.moveTo(x+spD, y-spD); ctx.lineTo(x-spD, y+spD)
+      ctx.stroke()
+      ctx.globalAlpha = 1
+    })
+
+    // Milky Way stars — drift + twinkle + diffraction spikes
+    MW_BG_STARS.forEach(s => {
+      const tw = 0.5 + 0.5 * Math.sin(2*Math.PI*t/s.tDur + s.tPhase)
+      const dx = s.dax * 3.2 * Math.sin(t / s.dtx + s.dpx)
+      const dy = s.day * 2.6 * Math.cos(t / s.dty + s.dpy)
+      const x  = s.nx*W + dx, y = s.ny*H + dy
+      const r  = s.size * (0.85 + 0.35*tw)
+      const op = s.op  * (0.28 + 0.72*tw)
       ctx.globalAlpha = op
       ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2)
-      ctx.fillStyle = '#fff'; ctx.fill()
-      // Cross spikes — twinkle fires broadly, longer spikes
-      if (tw > 0.35) {
-        const spikeAlpha = op * (tw - 0.35) * 2.4
-        const spikeLen = r * 4.5 * ((tw - 0.35) / 0.65)
-        ctx.globalAlpha = spikeAlpha
-        ctx.strokeStyle = '#fff'
-        ctx.lineWidth = 0.35
+      ctx.fillStyle = s.col; ctx.fill()
+      // Diffraction spikes for brighter stars
+      if (s.size > 0.8 && tw > 0.40) {
+        const spikeAlpha = op * (tw - 0.40) * 2.2
+        const spikeLen   = r * 4.2 * ((tw - 0.40) / 0.60)
+        ctx.globalAlpha  = spikeAlpha
+        ctx.strokeStyle  = s.col
+        ctx.lineWidth    = 0.32
         ctx.beginPath()
         ctx.moveTo(x - spikeLen, y); ctx.lineTo(x + spikeLen, y)
         ctx.moveTo(x, y - spikeLen); ctx.lineTo(x, y + spikeLen)
@@ -457,9 +579,9 @@ export default function GalaxyView({ spaceGroups, currentSpacePath, onSelectSpac
 
         ctx.globalAlpha = isFading ? 0 : 1
 
-        // Hub glow
+        // Hub glow — reduced 50%
         const glowT = Math.min(cs / 80, 1)
-        const glowA = 0.07 + glowT * 0.20
+        const glowA = 0.035 + glowT * 0.10
         const glowR = bodyR * 0.7 + Math.min(Math.sqrt(cs) * 2.5 * pf, 24 * pf)
         const glow = ctx.createRadialGradient(sx, sy, 0, sx, sy, bodyR + glowR)
         glow.addColorStop(0, `rgba(${cr},${cg},${cb},${glowA})`)
@@ -536,54 +658,86 @@ export default function GalaxyView({ spaceGroups, currentSpacePath, onSelectSpac
     {
       const bhX = W - 72, bhY = H - 72
       const bhActive = overBHRef.current
-      const bhTilt = Math.sin(t * Math.PI / 9) * (14 * Math.PI / 180)
-      const diskRX = BH_R * 1.9, diskRY = BH_R * 0.38
-      const singR  = BH_R * 0.69
-
-      // Outer ambient glow
-      const bhGlow = ctx.createRadialGradient(bhX, bhY, 0, bhX, bhY, BH_R * 3.25)
-      bhGlow.addColorStop(0,    bhActive ? 'rgba(255,160,40,0.52)' : 'rgba(255,110,15,0.28)')
-      bhGlow.addColorStop(0.42, bhActive ? 'rgba(255,70,0,0.20)'  : 'rgba(200,50,0,0.09)')
-      bhGlow.addColorStop(1,    'rgba(0,0,0,0)')
-      ctx.beginPath(); ctx.arc(bhX, bhY, BH_R * 3.25, 0, Math.PI * 2)
-      ctx.fillStyle = bhGlow; ctx.fill()
-
-      // Back disk — dim, behind singularity (clip to upper half)
+      // Drag-radius hint — dashed ring shown while dragging a space star
+      if (draggingStarRef.current) {
+        ctx.beginPath(); ctx.arc(bhX, bhY, BH_R * 1.8, 0, Math.PI * 2)
+        ctx.strokeStyle = 'rgba(255,140,30,0.28)'; ctx.lineWidth = 1
+        ctx.setLineDash([4, 5]); ctx.stroke(); ctx.setLineDash([])
+      }
+      // Outer glow — warm orange/amber
+      const bhGrad = ctx.createRadialGradient(bhX, bhY, BH_R * 0.3, bhX, bhY, BH_R * 2.8)
+      bhGrad.addColorStop(0,   bhActive ? 'rgba(255,160,40,0.52)' : 'rgba(255,110,15,0.28)')
+      bhGrad.addColorStop(0.5, bhActive ? 'rgba(200,60,0,0.22)'  : 'rgba(180,50,0,0.10)')
+      bhGrad.addColorStop(1,   'rgba(0,0,0,0)')
+      ctx.beginPath(); ctx.arc(bhX, bhY, BH_R * 2.8, 0, Math.PI * 2)
+      ctx.fillStyle = bhGrad; ctx.fill()
+      // Event horizon disk — scattered/broken particle field (x-axis orbit)
       ctx.save()
-      ctx.beginPath(); ctx.rect(0, 0, W, bhY); ctx.clip()
-      ctx.beginPath(); ctx.ellipse(bhX, bhY, diskRX, diskRY, bhTilt, 0, Math.PI * 2)
-      ctx.strokeStyle = bhActive ? 'rgba(180,60,0,0.55)' : 'rgba(180,60,0,0.38)'
-      ctx.lineWidth = bhActive ? 5 : 4; ctx.stroke()
+      ctx.translate(bhX, bhY)
+      for (let i = 0; i < 209; i++) {
+        const r1 = Math.abs(Math.sin(i * 127.1 + 311.7))
+        const r2 = Math.abs(Math.sin(i * 269.5 + 183.3))
+        const r3 = Math.abs(Math.sin(i * 419.2 +  71.1))
+        const r4 = Math.abs(Math.sin(i *  73.8 + 229.4))
+        if (r4 < 0.20) continue
+        const angle = (i / 209) * Math.PI * 2 + (r1 - 0.5) * 0.50 + t * bhSpeedRef.current
+        const radF  = r2
+        const diskR = BH_R * (0.88 + radF * 0.90)
+        const ex = Math.cos(angle) * diskR
+        const ey = Math.sin(angle) * diskR * 0.30
+        const pSize = 0.2 + r3 * 0.9
+        const heat  = 1 - radF
+        const tw = 0.60 + 0.40 * Math.sin(t * 1.6 + r1 * 6.283)
+        const depth = 0.75 + 0.25 * Math.sin(angle)
+        const baseA = bhActive ? 0.50 + 0.45 * heat : 0.22 + 0.28 * heat
+        ctx.globalAlpha = baseA * (0.40 + 0.60 * r3) * tw * depth
+        ctx.beginPath(); ctx.arc(ex, ey, pSize, 0, Math.PI * 2)
+        ctx.fillStyle = heat > 0.60 ? (bhActive ? '#fff5cc' : '#ffd050')
+                     : heat > 0.28 ? (bhActive ? '#ffaa28' : '#ff7010')
+                     :                (bhActive ? '#ff4c0c' : '#b83208')
+        ctx.fill()
+      }
+      ctx.globalAlpha = 1
       ctx.restore()
-
-      // Event horizon — black circle
-      ctx.beginPath(); ctx.arc(bhX, bhY, singR, 0, Math.PI * 2)
+      // Dark singularity
+      ctx.beginPath(); ctx.arc(bhX, bhY, BH_R * 0.62, 0, Math.PI * 2)
       ctx.fillStyle = '#000'; ctx.fill()
-      // Photon ring glow
-      ctx.save()
-      ctx.shadowColor = bhActive ? 'rgba(255,130,0,0.95)' : 'rgba(255,90,0,0.60)'
-      ctx.shadowBlur  = bhActive ? 16 : 12
-      ctx.beginPath(); ctx.arc(bhX, bhY, singR, 0, Math.PI * 2)
-      ctx.strokeStyle = bhActive ? 'rgba(255,200,70,1)' : 'rgba(255,160,30,0.80)'
-      ctx.lineWidth = bhActive ? 2.5 : 2; ctx.stroke()
-      ctx.restore()
-
-      // Front disk — bright, in front of singularity (clip to lower half)
-      ctx.save()
-      ctx.beginPath(); ctx.rect(0, bhY, W, H); ctx.clip()
-      ctx.save()
-      ctx.shadowColor = bhActive ? 'rgba(255,170,30,0.92)' : 'rgba(255,150,20,0.75)'
-      ctx.shadowBlur  = bhActive ? 22 : 14
-      ctx.beginPath(); ctx.ellipse(bhX, bhY, diskRX, diskRY, bhTilt, 0, Math.PI * 2)
-      ctx.strokeStyle = bhActive ? 'rgba(255,210,60,0.96)' : 'rgba(255,210,60,0.88)'
-      ctx.lineWidth = bhActive ? 8 : 6; ctx.stroke()
-      ctx.restore(); ctx.restore()
-
+      // Photon ring glow — layered thin strokes for soft halo
+      const ringPulse = 0.75 + 0.25 * Math.sin(t * 1.2)
+      ctx.beginPath(); ctx.arc(bhX, bhY, BH_R * 0.62, 0, Math.PI * 2)
+      ctx.strokeStyle = bhActive ? `rgba(255,240,180,${(0.12 * ringPulse).toFixed(3)})` : `rgba(255,210,120,${(0.08 * ringPulse).toFixed(3)})`
+      ctx.lineWidth = 5; ctx.stroke()
+      ctx.beginPath(); ctx.arc(bhX, bhY, BH_R * 0.62, 0, Math.PI * 2)
+      ctx.strokeStyle = bhActive ? `rgba(255,255,220,${(0.55 * ringPulse).toFixed(3)})` : `rgba(255,200,80,${(0.38 * ringPulse).toFixed(3)})`
+      ctx.lineWidth = 0.8; ctx.stroke()
+      // Gravitational pulse rings
+      if (pulseRef.current.startT !== null) {
+        const _pe = t - pulseRef.current.startT
+        if (_pe < 1.4) {
+          for (let _ri = 0; _ri < 3; _ri++) {
+            const _re = _pe - _ri * 0.22; if (_re <= 0) continue
+            const _rp = Math.min(_re / 0.9, 1)
+            ctx.beginPath(); ctx.arc(bhX, bhY, BH_R * (1.2 + _rp * 4.5), 0, Math.PI * 2)
+            ctx.strokeStyle = `rgba(255,170,40,${((1 - _rp) * 0.55).toFixed(3)})`
+            ctx.lineWidth = 1.2; ctx.stroke()
+          }
+        } else { pulseRef.current.startT = null }
+      }
       // Label
+      ctx.font = bhActive ? 'bold 10px -apple-system, sans-serif' : '9px -apple-system, sans-serif'
+      ctx.fillStyle = bhActive ? 'rgba(255,210,80,0.95)' : 'rgba(220,130,30,0.55)'
       ctx.textAlign = 'center'
-      ctx.font = bhActive ? 'bold 10px -apple-system,sans-serif' : '9px -apple-system,sans-serif'
-      ctx.fillStyle = bhActive ? 'rgba(255,210,80,0.95)' : 'rgba(220,130,30,0.52)'
-      ctx.fillText(bhActive ? '⬤ Archive' : 'Archive', bhX, bhY + singR + 14)
+      ctx.fillText(bhActive ? '⬤ Archive' : 'Archive', bhX, bhY + BH_R + 15)
+      // Archive count badge
+      if (archivedCountRef.current > 0) {
+        const _bx = bhX + BH_R * 0.74, _by = bhY - BH_R * 0.74
+        ctx.beginPath(); ctx.arc(_bx, _by, 8, 0, Math.PI * 2)
+        ctx.fillStyle = 'rgba(255,140,30,0.92)'; ctx.fill()
+        ctx.font = 'bold 8px -apple-system, sans-serif'; ctx.fillStyle = '#000'
+        ctx.textBaseline = 'middle'
+        ctx.fillText(String(archivedCountRef.current), _bx, _by)
+        ctx.textBaseline = 'alphabetic'
+      }
     }
 
     // Loading / empty overlay text
@@ -608,12 +762,16 @@ export default function GalaxyView({ spaceGroups, currentSpacePath, onSelectSpac
   // ── Hover tracking ────────────────────────────────────────────────────────
   const handleMouseMove = useCallback((e) => {
     if (flyingToRef.current) return
+    const bx = window.innerWidth - 72, by = window.innerHeight - 72
+    const onBH = Math.hypot(e.clientX - bx, e.clientY - by) < BH_R * 1.8
+    if (onBH !== bhCursorHoverRef.current) { bhCursorHoverRef.current = onBH }
     const hit = hitTest(e.clientX, e.clientY)
     const id = hit?.path ?? null
     if (id !== hoveredRef.current) {
-      hoveredRef.current = id
-      setHoveredId(id)
-      if (canvasRef.current) canvasRef.current.style.cursor = id ? 'pointer' : 'grab'
+      hoveredRef.current = id; setHoveredId(id)
+      if (canvasRef.current) canvasRef.current.style.cursor = id ? 'pointer' : (onBH ? 'pointer' : 'grab')
+    } else if (canvasRef.current && !id) {
+      canvasRef.current.style.cursor = onBH ? 'pointer' : 'grab'
     }
   }, [hitTest])
 
@@ -628,6 +786,15 @@ export default function GalaxyView({ spaceGroups, currentSpacePath, onSelectSpac
   const handleMouseDown = useCallback((e) => {
     if (flyingToRef.current) return
     e.preventDefault()
+    // BH left-click (no star drag in progress) → pulse + open archive panel
+    if (e.button === 0 && !draggingStarRef.current) {
+      const bx = window.innerWidth - 72, by = window.innerHeight - 72
+      if (Math.hypot(e.clientX - bx, e.clientY - by) < BH_R * 1.5) {
+        pulseRef.current.startT = timeRef.current
+        setArchivePanel(p => ({ ...p, open: true }))
+        return
+      }
+    }
     const hit = e.button === 0 ? hitTest(e.clientX, e.clientY) : null
 
     if (hit && e.button === 0) {
@@ -658,10 +825,10 @@ export default function GalaxyView({ spaceGroups, currentSpacePath, onSelectSpac
         setDraggingStar(null); setGhostPos({ x:0, y:0 }); setOverBH(false)
         if (!didDrag) { handleSelect(hit, startX, startY); return }
         if (dropped && wasOverBH) {
-          const ok = await window.electronAPI.confirmDialog(
-            `Archive "${dropped.name}"?`,
-            `This will move "${dropped.name}" and all its contents to the Archive folder.`
-          )
+          const ok = await new Promise(resolve => {
+            archiveResolveRef.current = resolve
+            setArchiveModal({ name: dropped.name })
+          })
           if (ok) {
             const archivePath = `${dropped.groupPath}/Archive`
             await window.electronAPI.ensureFolder(archivePath)
@@ -717,7 +884,11 @@ export default function GalaxyView({ spaceGroups, currentSpacePath, onSelectSpac
 
   return (
     <div
-      onContextMenu={e => e.preventDefault()}
+      onContextMenu={e => {
+        e.preventDefault()
+        const bx = window.innerWidth - 72, by = window.innerHeight - 72
+        if (Math.hypot(e.clientX - bx, e.clientY - by) < BH_R * 1.5) setBhCtxMenu({ x: e.clientX, y: e.clientY })
+      }}
       style={{
         position:'fixed', inset:0, zIndex:200, overflow:'hidden',
         cursor: draggingStar ? 'grabbing' : 'grab',
@@ -805,7 +976,7 @@ export default function GalaxyView({ spaceGroups, currentSpacePath, onSelectSpac
           background:`radial-gradient(circle at 30% 27%,rgba(255,255,255,0.92) 0%,rgba(255,255,255,0) 16%),radial-gradient(circle at 34% 32%,rgba(255,255,255,0.38) 0%,rgba(255,255,255,0.08) 45%,rgba(0,0,0,0.42) 100%),${draggingStar.color}`,
           boxShadow:`0 0 14px ${draggingStar.color}88`,
           opacity: overBH ? 0.5 : 0.9,
-          transform: overBH ? 'scale(0.7)' : 'scale(1)',
+          transform: overBH ? 'scale(0.45, 1.55) rotate(45deg)' : 'scale(1)',
           transition:'transform 0.15s ease,opacity 0.15s ease',
           zIndex:250, pointerEvents:'none',
         }} />
@@ -824,6 +995,136 @@ export default function GalaxyView({ spaceGroups, currentSpacePath, onSelectSpac
           }}
           onAnimationEnd={handleFlyEnd}
         />
+      )}
+
+      {/* Archive confirm modal — space color scheme */}
+      {archiveModal && (
+        <div
+          className="absolute inset-0 flex items-center justify-center"
+          style={{ zIndex: 200, background: 'rgba(0,0,12,0.72)', backdropFilter: 'blur(6px)' }}
+        >
+          <div style={{
+            background: 'rgba(8,6,20,0.95)', border: '1px solid rgba(255,165,40,0.22)',
+            borderRadius: 14, padding: '22px 26px', maxWidth: 340, width: '90%',
+            display: 'flex', flexDirection: 'column', gap: 16,
+            boxShadow: '0 8px 48px rgba(0,0,0,0.7), 0 0 32px rgba(255,140,30,0.10)',
+          }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+              <span style={{ fontSize: 14, fontWeight: 600, color: 'rgba(255,215,135,0.95)' }}>
+                Archive &ldquo;{archiveModal.name}&rdquo;?
+              </span>
+              <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.42)', lineHeight: 1.55 }}>
+                This will move &ldquo;{archiveModal.name}&rdquo; and all its contents to the Archive folder.
+              </span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <button
+                onClick={() => { setArchiveModal(null); archiveResolveRef.current?.(false) }}
+                style={{ padding: '7px 18px', borderRadius: 8, fontSize: 12, cursor: 'pointer',
+                  background: 'transparent', border: '1px solid rgba(255,255,255,0.10)',
+                  color: 'rgba(255,255,255,0.42)', transition: 'all 0.15s' }}
+                onMouseEnter={e => { e.currentTarget.style.color = 'rgba(255,255,255,0.75)'; e.currentTarget.style.background = 'rgba(255,255,255,0.06)' }}
+                onMouseLeave={e => { e.currentTarget.style.color = 'rgba(255,255,255,0.42)'; e.currentTarget.style.background = 'transparent' }}
+              >Cancel</button>
+              <button
+                onClick={() => { setArchiveModal(null); archiveResolveRef.current?.(true) }}
+                style={{ padding: '7px 18px', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                  background: 'linear-gradient(135deg,rgba(255,155,35,0.92),rgba(215,85,0,0.92))',
+                  color: '#fff', border: '1px solid rgba(255,165,40,0.35)',
+                  boxShadow: '0 2px 12px rgba(255,120,0,0.32)', transition: 'opacity 0.15s' }}
+                onMouseEnter={e => e.currentTarget.style.opacity = '0.82'}
+                onMouseLeave={e => e.currentTarget.style.opacity = '1'}
+              >Archive</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* BH right-click context menu */}
+      {bhCtxMenu && (
+        <div
+          style={{ position:'fixed', left:bhCtxMenu.x, top:bhCtxMenu.y, zIndex:400,
+            background:'rgba(10,8,24,0.97)', border:'1px solid rgba(255,165,40,0.22)',
+            borderRadius:10, padding:'4px 0', minWidth:160,
+            boxShadow:'0 8px 32px rgba(0,0,0,0.7)', backdropFilter:'blur(12px)' }}
+          onMouseLeave={() => setBhCtxMenu(null)}
+        >
+          {[
+            { label:'View Archive', action:() => { pulseRef.current.startT = timeRef.current; setArchivePanel(p => ({ ...p, open:true })); setBhCtxMenu(null) } },
+            { label:'Empty Archive', action:async () => {
+              setBhCtxMenu(null)
+              if (!archivePanel.items.length) return
+              const ok = await window.electronAPI.confirmDialog('Empty Archive?', 'This permanently deletes all archived spaces.')
+              if (ok) { for (const item of archivePanel.items) await window.electronAPI.deleteFolder(item.path); setArchivePanel(p => ({ ...p, items:[] })) }
+            }},
+          ].map(item => (
+            <button key={item.label} onClick={item.action}
+              style={{ display:'block', width:'100%', padding:'8px 16px', background:'none', border:'none',
+                cursor:'pointer', fontSize:12, color:'rgba(255,220,140,0.85)', textAlign:'left' }}
+              onMouseEnter={e => e.currentTarget.style.background='rgba(255,140,30,0.14)'}
+              onMouseLeave={e => e.currentTarget.style.background='none'}
+            >{item.label}</button>
+          ))}
+        </div>
+      )}
+
+      {/* Archive panel */}
+      {archivePanel.open && (
+        <div className="absolute inset-0 flex items-center justify-center"
+          style={{ zIndex:300, background:'rgba(0,0,12,0.82)', backdropFilter:'blur(8px)' }}>
+          <div style={{ background:'rgba(8,6,20,0.97)', border:'1px solid rgba(255,165,40,0.22)',
+            borderRadius:16, padding:'24px 28px', maxWidth:420, width:'90%', maxHeight:'75vh',
+            display:'flex', flexDirection:'column', gap:16,
+            boxShadow:'0 8px 48px rgba(0,0,0,0.7), 0 0 32px rgba(255,140,30,0.12)' }}>
+            <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+              <span style={{ fontSize:14, fontWeight:600, color:'rgba(255,215,135,0.95)' }}>⬤ Archive</span>
+              <button onClick={() => setArchivePanel(p => ({ ...p, open:false }))}
+                style={{ background:'none', border:'none', cursor:'pointer', color:'rgba(255,255,255,0.35)', fontSize:16 }}>✕</button>
+            </div>
+            {archivePanel.items.length === 0
+              ? <p style={{ fontSize:12, color:'rgba(255,255,255,0.3)', textAlign:'center', padding:'12px 0' }}>No archived spaces</p>
+              : <div style={{ overflowY:'auto', display:'flex', flexDirection:'column', gap:8, maxHeight:'calc(75vh - 120px)' }}>
+                  {archivePanel.items.map(item => (
+                    <div key={item.path} style={{ display:'flex', alignItems:'center', justifyContent:'space-between',
+                      padding:'8px 12px', borderRadius:8, background:'rgba(255,255,255,0.04)', border:'1px solid rgba(255,255,255,0.07)' }}>
+                      <span style={{ fontSize:12, color:'rgba(255,255,255,0.72)' }}>{item.name}</span>
+                      <button
+                        onClick={async () => {
+                          const dest = item.groupPath + '/' + item.name
+                          const result = await window.electronAPI.renameFile(item.path, dest)
+                          if (result.success) setArchivePanel(p => ({ ...p, items:p.items.filter(i => i.path !== item.path) }))
+                        }}
+                        style={{ padding:'4px 12px', borderRadius:6, fontSize:11, cursor:'pointer',
+                          background:'rgba(255,140,30,0.18)', border:'1px solid rgba(255,140,30,0.35)',
+                          color:'rgba(255,200,80,0.9)', transition:'all 0.15s' }}
+                        onMouseEnter={e => e.currentTarget.style.background='rgba(255,140,30,0.32)'}
+                        onMouseLeave={e => e.currentTarget.style.background='rgba(255,140,30,0.18)'}
+                      >Restore</button>
+                    </div>
+                  ))}
+                </div>
+            }
+            <div style={{ display:'flex', justifyContent:'flex-end', gap:8, paddingTop:4, borderTop:'1px solid rgba(255,255,255,0.07)' }}>
+              <button
+                onClick={async () => {
+                  if (!archivePanel.items.length) return
+                  const ok = await window.electronAPI.confirmDialog('Empty Archive?', 'This permanently deletes all archived spaces. This cannot be undone.')
+                  if (ok) { for (const item of archivePanel.items) await window.electronAPI.deleteFolder(item.path); setArchivePanel(p => ({ ...p, items:[] })) }
+                }}
+                style={{ padding:'6px 16px', borderRadius:8, fontSize:11, cursor:'pointer',
+                  background:'rgba(220,40,40,0.15)', border:'1px solid rgba(220,40,40,0.30)', color:'rgba(255,100,80,0.8)' }}
+                onMouseEnter={e => e.currentTarget.style.background='rgba(220,40,40,0.28)'}
+                onMouseLeave={e => e.currentTarget.style.background='rgba(220,40,40,0.15)'}
+              >Empty Archive</button>
+              <button onClick={() => setArchivePanel(p => ({ ...p, open:false }))}
+                style={{ padding:'6px 16px', borderRadius:8, fontSize:11, cursor:'pointer',
+                  background:'rgba(255,255,255,0.06)', border:'1px solid rgba(255,255,255,0.10)', color:'rgba(255,255,255,0.5)' }}
+                onMouseEnter={e => e.currentTarget.style.background='rgba(255,255,255,0.12)'}
+                onMouseLeave={e => e.currentTarget.style.background='rgba(255,255,255,0.06)'}
+              >Done</button>
+            </div>
+          </div>
+        </div>
       )}
 
       <style>{`

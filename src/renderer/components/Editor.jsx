@@ -164,6 +164,12 @@ export default function Editor({ file, files, vaultPath, onWikiLinkClick, onCrea
   const autosaveTimer = useRef(null)
   const lastSavedContent = useRef('')
   const textareaRef = useRef(null)
+  const previewRef = useRef(null)
+  const searchInputRef = useRef(null)
+  const [searchOpen,  setSearchOpen]  = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchIdx,   setSearchIdx]   = useState(0)
+  const [matchCount,  setMatchCount]  = useState(0)
 
   useEffect(() => {
     let cancelled = false
@@ -283,6 +289,84 @@ export default function Editor({ file, files, vaultPath, onWikiLinkClick, onCrea
       }
     }
   }, [vaultPath, file.path, insertAtCursor])
+
+  // ── Find (Ctrl/Cmd+F) ─────────────────────────────────────────────────────
+  useEffect(() => {
+    const onKey = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+        e.preventDefault()
+        setSearchOpen(true)
+        setTimeout(() => { searchInputRef.current?.select() }, 0)
+      }
+      if (e.key === 'Escape') setSearchOpen(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
+  // Reset match index whenever the query or mode changes
+  useEffect(() => { setSearchIdx(0) }, [searchQuery, mode])
+
+  // Edit mode: select current match in textarea
+  useEffect(() => {
+    if (!searchOpen || mode !== 'edit') return
+    const q = searchQuery.trim().toLowerCase()
+    if (!q || !textareaRef.current) { setMatchCount(0); return }
+    const lower = content.toLowerCase()
+    const hits = []
+    let i = 0
+    while ((i = lower.indexOf(q, i)) !== -1) { hits.push(i); i += q.length }
+    setMatchCount(hits.length)
+    if (!hits.length) return
+    const idx = ((searchIdx % hits.length) + hits.length) % hits.length
+    textareaRef.current.focus()
+    textareaRef.current.setSelectionRange(hits[idx], hits[idx] + q.length)
+  }, [searchOpen, searchQuery, searchIdx, content, mode])
+
+  // Preview mode: highlight matches directly in the rendered DOM
+  useEffect(() => {
+    if (mode !== 'preview' || !previewRef.current) return
+    const root = previewRef.current
+    root.querySelectorAll('mark[data-sh]').forEach(m => {
+      m.replaceWith(document.createTextNode(m.textContent))
+    })
+    root.normalize()
+    if (!searchOpen || !searchQuery.trim()) { setMatchCount(0); return }
+    const q = searchQuery.trim().toLowerCase()
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+    const textNodes = []
+    let n
+    while ((n = walker.nextNode())) textNodes.push(n)
+    let total = 0
+    textNodes.forEach(tn => {
+      const text = tn.textContent
+      const lower = text.toLowerCase()
+      if (!lower.includes(q)) return
+      const frag = document.createDocumentFragment()
+      let last = 0, pos = 0
+      while ((pos = lower.indexOf(q, last)) !== -1) {
+        if (pos > last) frag.appendChild(document.createTextNode(text.slice(last, pos)))
+        const mark = document.createElement('mark')
+        mark.setAttribute('data-sh', total)
+        mark.textContent = text.slice(pos, pos + q.length)
+        mark.style.cssText = 'background:rgba(255,200,0,0.32);border-radius:2px;color:inherit'
+        frag.appendChild(mark)
+        total++
+        last = pos + q.length
+      }
+      if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)))
+      tn.parentNode.replaceChild(frag, tn)
+    })
+    setMatchCount(total)
+    if (total > 0) {
+      const safeIdx = ((searchIdx % total) + total) % total
+      const cur = root.querySelector(`mark[data-sh="${safeIdx}"]`)
+      if (cur) {
+        cur.style.cssText = 'background:rgba(255,165,0,0.75);border-radius:2px;color:inherit;outline:2px solid rgba(255,165,0,0.9)'
+        cur.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+      }
+    }
+  }, [mode, content, searchQuery, searchOpen, searchIdx])
 
   const handleLinkClick = useCallback((href, x, y) => {
     setLinkPopup({ href, x, y })
@@ -421,42 +505,74 @@ export default function Editor({ file, files, vaultPath, onWikiLinkClick, onCrea
       )}
 
       {/* Content area */}
-      {isLoading ? (
-        <div className="flex-1 flex items-center justify-center">
-          <span className="text-sm" style={{ color: 'var(--text-dim)' }}>Loading…</span>
-        </div>
-      ) : mode === 'edit' ? (
-        <textarea
-          ref={textareaRef}
-          value={content}
-          onChange={handleChange}
-          onKeyDown={handleKeyDown}
-          onPaste={handlePaste}
-          spellCheck={false}
-          className="flex-1 w-full font-mono text-sm leading-relaxed p-6 resize-none border-none outline-none"
-          style={{ background: 'transparent', color: 'var(--text-primary)', caretColor: 'var(--accent)' }}
-          placeholder="Start writing in Markdown…&#10;&#10;Use [[Note Name]] to link to other notes.&#10;Use #tag to add tags."
-        />
-      ) : (
-        <div
-          className="flex-1 overflow-y-auto p-6 md:p-8"
-          onClick={e => {
-            // Click on the preview canvas (not on a link/span) → enter edit mode
-            const tag = e.target.tagName.toLowerCase()
-            if (tag !== 'a' && tag !== 'span' && tag !== 'button') setMode('edit')
-          }}
-          style={{ cursor: 'text' }}
-          title="Click to edit"
-        >
-          <div className="markdown-body max-w-3xl mx-auto">
-            {content.trim() ? (
-              <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeRaw, rehypeKatex]} components={components}>{content}</ReactMarkdown>
-            ) : (
-              <p className="text-[#6b7280]/60 italic text-sm">Nothing to preview yet. Switch to Edit mode to start writing.</p>
-            )}
+      <div className="relative flex-1 min-h-0 flex flex-col">
+        {/* Find bar — Ctrl/Cmd+F */}
+        {searchOpen && (
+          <div style={{ position: 'absolute', top: 8, right: 12, zIndex: 50, display: 'flex', alignItems: 'center', gap: 6, padding: '5px 10px', background: 'var(--glass-bg)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', border: '1px solid var(--glass-border)', borderRadius: 8, boxShadow: '0 4px 24px rgba(0,0,0,0.3)' }}>
+            <input
+              ref={searchInputRef}
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') { e.preventDefault(); e.shiftKey ? setSearchIdx(i => i - 1) : setSearchIdx(i => i + 1) }
+                if (e.key === 'Escape') { e.preventDefault(); setSearchOpen(false) }
+              }}
+              placeholder="Find…"
+              style={{ width: 160, fontSize: 12, color: 'var(--text-primary)', background: 'transparent', border: 'none', outline: 'none' }}
+            />
+            <span style={{ fontSize: 11, color: searchQuery && matchCount === 0 ? '#f87171' : 'var(--text-dim)', minWidth: 44, textAlign: 'right', whiteSpace: 'nowrap' }}>
+              {matchCount > 0 ? `${((searchIdx % matchCount) + matchCount) % matchCount + 1} / ${matchCount}` : searchQuery.trim() ? '0 / 0' : ''}
+            </span>
+            {[['↑', -1, 'Previous (Shift+Enter)'], ['↓', 1, 'Next (Enter)']].map(([lbl, dir, hint]) => (
+              <button key={lbl} onClick={() => setSearchIdx(i => i + dir)} title={hint}
+                style={{ fontSize: 14, lineHeight: 1, background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: '0 1px' }}
+                onMouseEnter={e => e.currentTarget.style.color = 'var(--text-primary)'}
+                onMouseLeave={e => e.currentTarget.style.color = 'var(--text-muted)'}
+              >{lbl}</button>
+            ))}
+            <button onClick={() => setSearchOpen(false)} title="Close (Esc)"
+              style={{ fontSize: 16, lineHeight: 1, background: 'transparent', border: 'none', color: 'var(--text-dim)', cursor: 'pointer', padding: '0 1px', marginLeft: 2 }}
+              onMouseEnter={e => e.currentTarget.style.color = 'var(--text-primary)'}
+              onMouseLeave={e => e.currentTarget.style.color = 'var(--text-dim)'}
+            >×</button>
           </div>
-        </div>
-      )}
+        )}
+        {isLoading ? (
+          <div className="flex-1 flex items-center justify-center">
+            <span className="text-sm" style={{ color: 'var(--text-dim)' }}>Loading…</span>
+          </div>
+        ) : mode === 'edit' ? (
+          <textarea
+            ref={textareaRef}
+            value={content}
+            onChange={handleChange}
+            onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
+            spellCheck={false}
+            className="flex-1 w-full font-mono text-sm leading-relaxed p-6 resize-none border-none outline-none"
+            style={{ background: 'transparent', color: 'var(--text-primary)', caretColor: 'var(--accent)' }}
+            placeholder="Start writing in Markdown…&#10;&#10;Use [[Note Name]] to link to other notes.&#10;Use #tag to add tags."
+          />
+        ) : (
+          <div
+            className="flex-1 overflow-y-auto p-6 md:p-8"
+            onClick={e => {
+              const tag = e.target.tagName.toLowerCase()
+              if (tag !== 'a' && tag !== 'span' && tag !== 'button') setMode('edit')
+            }}
+            style={{ cursor: 'text' }}
+            title="Click to edit"
+          >
+            <div ref={previewRef} className="markdown-body max-w-3xl mx-auto">
+              {content.trim() ? (
+                <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeRaw, rehypeKatex]} components={components}>{content}</ReactMarkdown>
+              ) : (
+                <p className="text-[#6b7280]/60 italic text-sm">Nothing to preview yet. Switch to Edit mode to start writing.</p>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* Link click popup */}
       {linkPopup && (

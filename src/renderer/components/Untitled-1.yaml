@@ -1,0 +1,30 @@
+git commit -m "  What was changed
+ 
+   src/main/main.js
+ 
+   - Added workspace IPC handlers: workspaces:read and workspaces:save — read/write {userData}/workspaces.json for persisting multi-vault configs
+   - Extended vault:read response: Now returns nodes[] alongside the existing files[] and folders[]. Each node has {id, parentId, type: 'folder'|'note', title, path, order} — the formal Node model with
+   recursive parent-child relationships
+ 
+   src/main/preload.js
+ 
+   - Added readWorkspaces and saveWorkspaces to the window.electronAPI context bridge
+ 
+   src/renderer/App.jsx
+ 
+   - Added nodes, vaults, activeVaultId state
+   - Added startup effect that reads workspaces.json and restores the last active vault
+   - handleSelectVault now adds to the workspace registry (not just one-shot)
+   - Added handleSwitchVault — switches active vault, updates path and config
+   - Added handleRemoveVault — removes vault from workspace
+   - Added saveWorkspaces helper
+   - handleMoveFile updated to work via parentId semantics (works across any depth, not just top-level)
+   - All new vault props passed to Sidebar
+
+   src/renderer/components/Sidebar.jsx
+
+   - Added vaults, activeVaultId, onSwitchVault, onAddVault, onRemoveVault props
+   - Vault switcher section: When multiple vaults exist, shows a switchable list above search. Single-vault mode shows an add vault toggle button
+   - Removed all depth-based styling in TreeNode: font size, font weight, and color no longer differ at depth 0 vs deeper — consistent rendering at any nesting level
+   - Renamed labels: Topic -> Folder, Topics section header -> Folders, sub-note → child note, Create a Topic first  → Create a Folder first
+   - handleCreateNote now falls back to topicNames[0] so notes can always be created when a folder exists, even without an active file"
