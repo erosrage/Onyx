@@ -328,10 +328,10 @@ export default function Sidebar({
   vaultPath, files, folders = [], activeFile, onOpenFile, onCreateFile, onDeleteFile, onDeleteTopic,
   onChangeVault, onRefresh, showGraph, onToggleGraph, showAI, onToggleAI,
   showWhiteboard, onToggleWhiteboard, showKanban, onToggleKanban,
-  showFileExplorer, onToggleFileExplorer,
+
   showNotes, onShowNotes, theme, onSetTheme, onMoveFile,
   onArchiveTopic, onUnarchiveTopic, onArchiveFile, revealFolder,
-  spaceGroups = [], onMoveTopic,
+  spaceGroups = [], onMoveTopic, onConvertTopicToNote,
 }) {
   const [createMode, setCreateMode] = useState(null)
   const [newThemeName, setNewThemeName] = useState('')
@@ -348,6 +348,7 @@ export default function Sidebar({
   })
   const [moveToSpaceModal, setMoveToSpaceModal] = useState(null) // { folder, folderName }
   const [availableSpaces, setAvailableSpaces] = useState([]) // [{ groupName, spaces: [{name,path}] }]
+  const [convertModal, setConvertModal] = useState(null) // { folder, folderName, destination?: string|null, conflict?: bool }
   const [search, setSearch] = useState('')
   const [collapsed, setCollapsed] = useState({})
   const [noteOrder, setNoteOrder] = useState(() => {
@@ -920,7 +921,6 @@ export default function Sidebar({
             {ic:<IcAI/>,          act:showAI,          fn:onToggleAI,         t:'Context Panel'},
             {ic:<IcWhiteboard/>,  act:showWhiteboard,  fn:onToggleWhiteboard, t:'Whiteboard Panel'},
             {ic:<IcKanban/>,      act:showKanban,      fn:onToggleKanban,     t:'Kanban Panel'},
-            {ic:<IcExplorer/>,    act:showFileExplorer,fn:onToggleFileExplorer,t:'File Explorer'},
           ].map(({ic,act,fn,t})=>(
             <button key={t} onClick={fn} title={t}
               className="flex items-center justify-center w-7 h-7 rounded-md transition-all duration-150"
@@ -963,6 +963,20 @@ export default function Sidebar({
               onMouseEnter={e => e.currentTarget.style.background = 'var(--glass-bg-strong)'}
               onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
             >Move to Space…</button>
+          )}
+          {contextMenu.folder && !contextMenu.folder.includes('/') && onConvertTopicToNote && (
+            <button
+              onClick={() => {
+                const folder = contextMenu.folder
+                const folderName = contextMenu.folderName || folder
+                setContextMenu(null)
+                setConvertModal({ folder, folderName })
+              }}
+              className="w-full text-left px-3 py-1.5 text-sm transition-colors"
+              style={{ color: 'var(--text-muted)' }}
+              onMouseEnter={e => e.currentTarget.style.background = 'var(--glass-bg-strong)'}
+              onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+            >Convert to Note…</button>
           )}
           {!contextMenu.folder && contextMenu.file && onArchiveFile && (
             <button onClick={handleArchive} className="w-full text-left px-3 py-1.5 text-sm transition-colors"
@@ -1030,6 +1044,101 @@ export default function Sidebar({
           </div>
         </div>
       )}
+
+      {/* Convert to Note modal */}
+      {convertModal && (() => {
+        const destinations = [
+          { label: 'Space Root', value: '' },
+          ...topicNames.filter(t => t !== convertModal.folder).map(t => ({ label: t, value: t })),
+        ]
+        const selectedDest = convertModal.destination
+        const isPickStep = selectedDest === undefined
+        const hasConflict = convertModal.conflict
+
+        return (
+          <div className="absolute inset-0 flex items-center justify-center"
+            style={{ zIndex: 300, background: 'rgba(0,0,12,0.72)', backdropFilter: 'blur(6px)' }}>
+            <div style={{
+              background: 'rgba(8,6,20,0.97)', border: '1px solid rgba(255,165,40,0.22)',
+              borderRadius: 16, padding: '22px 24px', maxWidth: 340, width: '90%', maxHeight: '70vh',
+              display: 'flex', flexDirection: 'column', gap: 14,
+              boxShadow: '0 8px 48px rgba(0,0,0,0.7), 0 0 32px rgba(255,140,30,0.10)',
+            }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <span style={{ fontSize: 14, fontWeight: 600, color: 'rgba(255,215,135,0.95)' }}>
+                  Convert &ldquo;{convertModal.folderName}&rdquo; to Note
+                </span>
+                <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)' }}>
+                  {isPickStep ? 'Move contents to:' : hasConflict ? 'Conflict detected' : `Move to "${selectedDest || 'Space Root'}"?`}
+                </span>
+              </div>
+
+              {isPickStep && (
+                <div style={{ overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 'calc(70vh - 130px)' }}>
+                  {destinations.map(dest => (
+                    <button key={dest.value}
+                      onClick={() => {
+                        const conflict = files.some(f =>
+                          (dest.value === '' ? f.folder === '' : f.folder === dest.value) &&
+                          f.name === convertModal.folderName
+                        )
+                        setConvertModal(m => ({ ...m, destination: dest.value, conflict }))
+                      }}
+                      style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px',
+                        borderRadius: 8, fontSize: 12, cursor: 'pointer',
+                        background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)',
+                        color: 'rgba(255,255,255,0.72)', transition: 'all 0.15s' }}
+                      onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,140,30,0.14)'; e.currentTarget.style.borderColor = 'rgba(255,140,30,0.30)'; e.currentTarget.style.color = 'rgba(255,200,80,0.95)' }}
+                      onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.07)'; e.currentTarget.style.color = 'rgba(255,255,255,0.72)' }}
+                    >{dest.label}</button>
+                  ))}
+                </div>
+              )}
+
+              {!isPickStep && hasConflict && (
+                <div style={{ fontSize: 12, color: 'rgba(255,180,80,0.9)', background: 'rgba(255,140,0,0.08)', border: '1px solid rgba(255,140,0,0.20)', borderRadius: 8, padding: '10px 12px', lineHeight: 1.5 }}>
+                  A note named &ldquo;{convertModal.folderName}&rdquo; already exists in {selectedDest ? `"${selectedDest}"` : 'Space Root'}. It will be overwritten.
+                </div>
+              )}
+
+              {!isPickStep && !hasConflict && (
+                <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.42)', lineHeight: 1.5 }}>
+                  The root note will be copied and all child notes will be moved to {selectedDest ? `"${selectedDest}"` : 'Space Root'}.
+                </div>
+              )}
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, paddingTop: 4, borderTop: '1px solid rgba(255,255,255,0.07)' }}>
+                <button
+                  onClick={() => {
+                    if (!isPickStep) { setConvertModal(m => ({ ...m, destination: undefined, conflict: false })); return }
+                    setConvertModal(null)
+                  }}
+                  style={{ padding: '7px 18px', borderRadius: 8, fontSize: 12, cursor: 'pointer',
+                    background: 'transparent', border: '1px solid rgba(255,255,255,0.10)',
+                    color: 'rgba(255,255,255,0.42)', transition: 'all 0.15s' }}
+                  onMouseEnter={e => { e.currentTarget.style.color = 'rgba(255,255,255,0.75)'; e.currentTarget.style.background = 'rgba(255,255,255,0.06)' }}
+                  onMouseLeave={e => { e.currentTarget.style.color = 'rgba(255,255,255,0.42)'; e.currentTarget.style.background = 'transparent' }}
+                >{isPickStep ? 'Cancel' : '← Back'}</button>
+                {!isPickStep && (
+                  <button
+                    onClick={async () => {
+                      const { folder, destination } = convertModal
+                      setConvertModal(null)
+                      await onConvertTopicToNote(folder, destination)
+                    }}
+                    style={{ padding: '7px 18px', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                      background: hasConflict ? 'linear-gradient(135deg,rgba(220,80,40,0.92),rgba(180,30,20,0.92))' : 'linear-gradient(135deg,rgba(255,155,35,0.92),rgba(215,85,0,0.92))',
+                      color: '#fff', border: '1px solid rgba(255,165,40,0.35)',
+                      boxShadow: '0 2px 12px rgba(255,120,0,0.32)', transition: 'opacity 0.15s' }}
+                    onMouseEnter={e => e.currentTarget.style.opacity = '0.82'}
+                    onMouseLeave={e => e.currentTarget.style.opacity = '1'}
+                  >{hasConflict ? 'Overwrite & Convert' : 'Convert'}</button>
+                )}
+              </div>
+            </div>
+          </div>
+        )
+      })()}
 
       {/* Move to Space modal */}
       {moveToSpaceModal && (

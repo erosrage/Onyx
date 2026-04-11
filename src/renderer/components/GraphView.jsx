@@ -300,7 +300,7 @@ async function buildGraph(allFiles) {
   return { nodes, edges, nodeById }
 }
 
-export default function GraphView({ files, activeFile, onOpenFile, onCreateFile, onDeleteFiles, onMoveFile, onArchiveTopic, onArchiveFile, onUnarchiveTopic, onUnarchiveFile, onRevealFolder, theme, vaultPath, onSwitchSpace, isVisible, recenterToken, centerOnStarToken, hasOverlay, spaceGroups = [], onMoveTopic }) {
+export default function GraphView({ files, activeFile, onOpenFile, onCreateFile, onDeleteFiles, onMoveFile, onArchiveTopic, onArchiveFile, onUnarchiveTopic, onUnarchiveFile, onRevealFolder, theme, vaultPath, onSwitchSpace, isVisible, recenterToken, centerOnStarToken, hasOverlay, spaceGroups = [], onMoveTopic, onConvertTopicToNote, homeViewMode, onSetHomeViewMode }) {
   const canvasRef = useRef(null)
   const graphRef = useRef({ nodes: [], edges: [], nodeById: {} })
   const viewRef = useRef({ scale: 1, panX: 0, panY: 0, tiltX: 0, tiltY: 0 })
@@ -320,6 +320,7 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
   })
   const [moveToSpaceModal, setMoveToSpaceModal] = useState(null) // { topicFolder, topicName }
   const [availableSpaces, setAvailableSpaces] = useState([]) // [{ groupName, spaces }]
+  const [convertModal, setConvertModal] = useState(null) // { topicFolder, topicName, destination?, conflict? }
   const setCtxMenuRef = useRef(setCtxMenu)
   const setHoveredNodeRef = useRef(setHoveredNode)
   const recenterRef = useRef(null)
@@ -333,7 +334,7 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
   useEffect(() => { setBhCtxMenuRef.current = setBhCtxMenu }, [setBhCtxMenu])
   const centerStarRef = useRef({ sx: -9999, sy: -9999, r: 42 }) // screen pos + hit radius of center star
   const prevVaultPathRef = useRef(vaultPath)
-  const pendingVaultFitRef = useRef(false) // triggers refit from inside the animation loop after vault switch
+  const fitAfterBuildRef = useRef(null) // single timer: fires 1s after vault load, fits spread nodes
 
   // Reset move submenu whenever menu closes
   useEffect(() => { if (!ctxMenu) setCtxMoveOpen(false) }, [ctxMenu])
@@ -386,7 +387,12 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
       prevVaultPathRef.current = vaultPath
       if (!hadNodes || isVaultSwitch) {
         viewRef.current.centered = false
-        pendingVaultFitRef.current = true
+        // One timer: wait 1 s for nodes to spread, then fit.
+        // By then the canvas effect has always already run and recenterRef points at the correct closure.
+        if (fitAfterBuildRef.current) clearTimeout(fitAfterBuildRef.current)
+        fitAfterBuildRef.current = setTimeout(() => {
+          if (recenterRef.current) recenterRef.current()
+        }, 1000)
       }
       setStats({ nodes: nodes.filter(n => !n.isTag && !n._archived).length, edges: edges.filter(e => !e.isTagEdge).length })
       setIsLoading(false)
@@ -573,9 +579,14 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
 
     function draw() {
       const t = performance.now() * 0.001
+      const _bhDt = bhPrevT !== null ? Math.min(t - bhPrevT, 0.1) : 0.016
+      bhPrevT = t
       // Smooth speed ramp — 3× faster when cursor is over BH
-      const _bhTarget = bhCursorHover ? 1.08 : 0.359
-      bhSpeedCurrent += (_bhTarget - bhSpeedCurrent) * 0.08
+      const _bhAnyHover = bhCursorHover || bhHover
+      const _bhTarget = _bhAnyHover ? 1.08 : 0.359
+      const _bhLerp = Math.min(_bhDt * 14, 1)
+      bhSpeedCurrent += (_bhTarget - bhSpeedCurrent) * _bhLerp
+      bhScaleCurrent += ((_bhAnyHover ? 1.28 : 1.0) - bhScaleCurrent) * _bhLerp
       ctx.clearRect(0, 0, W, H)
 
       // Background — dark mode: deep space + nebula clouds + bright stars
@@ -671,6 +682,11 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
         ctx.shadowColor = `rgba(${sr},${sg},${sb},0.8)`; ctx.shadowBlur = 8
         ctx.fill(); ctx.shadowBlur = 0
         ctx.restore()
+        // White core dot
+        ctx.beginPath(); ctx.arc(starSX, starSY, 2.2, 0, Math.PI * 2)
+        ctx.fillStyle = 'rgba(255,255,255,0.92)'
+        ctx.shadowColor = 'rgba(255,255,255,0.9)'; ctx.shadowBlur = 5
+        ctx.fill(); ctx.shadowBlur = 0
         // Vault name label beneath the star
         ctx.font = `bold ${Math.max(10, 11 * Math.min(view.scale, 1.4))}px -apple-system,"Segoe UI Variable",sans-serif`
         ctx.textAlign = 'center'
@@ -816,19 +832,20 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
 
       // ── Black hole (fixed screen-space, bottom-right) ─────────────────────
       bhX = W - 72; bhY = H - 72
-      const bhActive = bhHover
+      const bhActive = bhCursorHover || bhHover
+      const bhR = BH_R * bhScaleCurrent
       // Drag-radius hint — dashed ring shown while dragging any node
       if (isDragging) {
-        ctx.beginPath(); ctx.arc(bhX, bhY, BH_R * 1.8, 0, Math.PI * 2)
+        ctx.beginPath(); ctx.arc(bhX, bhY, bhR * 1.8, 0, Math.PI * 2)
         ctx.strokeStyle = 'rgba(255,140,30,0.28)'; ctx.lineWidth = 1
         ctx.setLineDash([4, 5]); ctx.stroke(); ctx.setLineDash([])
       }
       // Outer glow — warm orange/amber
-      const bhGrad = ctx.createRadialGradient(bhX, bhY, BH_R * 0.3, bhX, bhY, BH_R * 2.8)
-      bhGrad.addColorStop(0,   bhActive ? 'rgba(255,160,40,0.52)' : 'rgba(255,110,15,0.28)')
-      bhGrad.addColorStop(0.5, bhActive ? 'rgba(200,60,0,0.22)'  : 'rgba(180,50,0,0.10)')
+      const bhGrad = ctx.createRadialGradient(bhX, bhY, bhR * 0.3, bhX, bhY, bhR * 2.8)
+      bhGrad.addColorStop(0,   bhActive ? 'rgba(255,160,40,0.62)' : 'rgba(255,110,15,0.28)')
+      bhGrad.addColorStop(0.5, bhActive ? 'rgba(200,60,0,0.28)'  : 'rgba(180,50,0,0.10)')
       bhGrad.addColorStop(1,   'rgba(0,0,0,0)')
-      ctx.beginPath(); ctx.arc(bhX, bhY, BH_R * 2.8, 0, Math.PI * 2)
+      ctx.beginPath(); ctx.arc(bhX, bhY, bhR * 2.8, 0, Math.PI * 2)
       ctx.fillStyle = bhGrad; ctx.fill()
       // Event horizon disk — scattered/broken particle field (x-axis orbit)
       ctx.save()
@@ -841,14 +858,14 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
         if (r4 < 0.20) continue
         const angle = (i / 209) * Math.PI * 2 + (r1 - 0.5) * 0.50 + t * bhSpeedCurrent
         const radF  = r2
-        const diskR = BH_R * (0.88 + radF * 0.90)
+        const diskR = bhR * (0.88 + radF * 0.90)
         const ex = Math.cos(angle) * diskR
         const ey = Math.sin(angle) * diskR * 0.30
         const pSize = 0.2 + r3 * 0.9
         const heat  = 1 - radF
         const tw = 0.60 + 0.40 * Math.sin(t * 1.6 + r1 * 6.283)
         const depth = 0.75 + 0.25 * Math.sin(angle)
-        const baseA = bhActive ? 0.50 + 0.45 * heat : 0.22 + 0.28 * heat
+        const baseA = bhActive ? 0.60 + 0.38 * heat : 0.22 + 0.28 * heat
         ctx.globalAlpha = baseA * (0.40 + 0.60 * r3) * tw * depth
         ctx.beginPath(); ctx.arc(ex, ey, pSize, 0, Math.PI * 2)
         ctx.fillStyle = heat > 0.60 ? (bhActive ? '#fff5cc' : '#ffd050')
@@ -873,15 +890,15 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
         ctx.globalAlpha = 1
       }
       // Dark singularity
-      ctx.beginPath(); ctx.arc(bhX, bhY, BH_R * 0.62, 0, Math.PI * 2)
+      ctx.beginPath(); ctx.arc(bhX, bhY, bhR * 0.62, 0, Math.PI * 2)
       ctx.fillStyle = '#000'; ctx.fill()
       // Photon ring glow — layered thin strokes for soft halo
       const ringPulse = 0.75 + 0.25 * Math.sin(t * 1.2)
-      ctx.beginPath(); ctx.arc(bhX, bhY, BH_R * 0.62, 0, Math.PI * 2)
-      ctx.strokeStyle = bhActive ? `rgba(255,240,180,${(0.12 * ringPulse).toFixed(3)})` : `rgba(255,210,120,${(0.08 * ringPulse).toFixed(3)})`
-      ctx.lineWidth = 5; ctx.stroke()
-      ctx.beginPath(); ctx.arc(bhX, bhY, BH_R * 0.62, 0, Math.PI * 2)
-      ctx.strokeStyle = bhActive ? `rgba(255,255,220,${(0.55 * ringPulse).toFixed(3)})` : `rgba(255,200,80,${(0.38 * ringPulse).toFixed(3)})`
+      ctx.beginPath(); ctx.arc(bhX, bhY, bhR * 0.62, 0, Math.PI * 2)
+      ctx.strokeStyle = bhActive ? `rgba(255,240,180,${(0.18 * ringPulse).toFixed(3)})` : `rgba(255,210,120,${(0.08 * ringPulse).toFixed(3)})`
+      ctx.lineWidth = bhActive ? 7 : 5; ctx.stroke()
+      ctx.beginPath(); ctx.arc(bhX, bhY, bhR * 0.62, 0, Math.PI * 2)
+      ctx.strokeStyle = bhActive ? `rgba(255,255,220,${(0.75 * ringPulse).toFixed(3)})` : `rgba(255,200,80,${(0.38 * ringPulse).toFixed(3)})`
       ctx.lineWidth = 0.8; ctx.stroke()
       // Gravitational pulse rings
       if (bhPulseStartT !== null) {
@@ -890,7 +907,7 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
           for (let _ri = 0; _ri < 3; _ri++) {
             const _re = _pe - _ri * 0.22; if (_re <= 0) continue
             const _rp = Math.min(_re / 0.9, 1)
-            ctx.beginPath(); ctx.arc(bhX, bhY, BH_R * (1.2 + _rp * 4.5), 0, Math.PI * 2)
+            ctx.beginPath(); ctx.arc(bhX, bhY, bhR * (1.2 + _rp * 4.5), 0, Math.PI * 2)
             ctx.strokeStyle = `rgba(255,170,40,${((1 - _rp) * 0.55).toFixed(3)})`
             ctx.lineWidth = 1.2; ctx.stroke()
           }
@@ -900,11 +917,11 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
       ctx.font = bhActive ? 'bold 10px -apple-system, sans-serif' : '9px -apple-system, sans-serif'
       ctx.fillStyle = bhActive ? 'rgba(255,210,80,0.95)' : 'rgba(220,130,30,0.55)'
       ctx.textAlign = 'center'
-      ctx.fillText(bhActive ? '⬤ Archive' : 'Archive', bhX, bhY + BH_R + 15)
+      ctx.fillText(bhActive ? '⬤ Archive' : 'Archive', bhX, bhY + bhR + 15)
       // Archive count badge
       const _archCount = files.filter(f => f.folder?.split('/')[0] === 'Archive').length
       if (_archCount > 0) {
-        const _bx = bhX + BH_R * 0.74, _by = bhY - BH_R * 0.74
+        const _bx = bhX + bhR * 0.74, _by = bhY - bhR * 0.74
         ctx.beginPath(); ctx.arc(_bx, _by, 8, 0, Math.PI * 2)
         ctx.fillStyle = 'rgba(255,140,30,0.92)'; ctx.fill()
         ctx.font = 'bold 8px -apple-system, sans-serif'; ctx.fillStyle = '#000'
@@ -919,13 +936,6 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
     function loop() {
       if (!running) return
       simulate(); draw(); frame++
-      // After ~60 frames of simulation post vault-switch, fit the view to the
-      // spread-out nodes. This fires from inside the loop so it's immune to
-      // isLoading / file-watcher cycles cancelling the 900ms setTimeout.
-      if (pendingVaultFitRef.current && frame >= 60) {
-        pendingVaultFitRef.current = false
-        if (recenterRef.current) recenterRef.current()
-      }
       animRef.current = requestAnimationFrame(loop)
     }
 
@@ -950,6 +960,8 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
     let bhHover = false         // true while dragging a node over the black hole
     let bhCursorHover = false   // true when cursor is over BH without dragging
     let bhSpeedCurrent = 0.359  // lerps toward target for smooth speed ramp
+    let bhScaleCurrent = 1.0    // lerps toward 1.28 on hover for size/brightness
+    let bhPrevT = null          // for delta-time based lerp
     let bhPulseStartT = null    // gravitational pulse animation start time
 
     // Wrap draw to also highlight drop target
@@ -1178,6 +1190,8 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
       draw()
     }
 
+    canvas.addEventListener('mouseleave', () => { bhCursorHover = false }, { signal: ac.signal })
+
     canvas.addEventListener('wheel', e => {
       e.preventDefault()
       const [cx, cy] = getCanvasXY(e)
@@ -1197,35 +1211,26 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
     }
   }, [isLoading, files, activeFile, onOpenFile, theme])
 
-  // Re-fit whenever the graph becomes visible or recenterToken changes.
+  // Cancel the refit timer only when GraphView unmounts (not on every canvas effect re-run).
+  // If cancelled on every re-run the timer set in buildGraph.then() gets wiped out the moment
+  // setIsLoading(false) triggers the canvas effect, which is exactly why centering never fires.
+  useEffect(() => {
+    return () => { if (fitAfterBuildRef.current) { clearTimeout(fitAfterBuildRef.current); fitAfterBuildRef.current = null } }
+  }, [])
+
+  // Re-fit whenever the graph becomes visible or the recenter button is pressed.
   useEffect(() => {
     if (!isVisible) return
-    // One rAF lets the browser paint the panel at full size before we measure it.
-    const id = requestAnimationFrame(() => {
-      if (recenterRef.current) recenterRef.current()
-    })
+    const id = requestAnimationFrame(() => { if (recenterRef.current) recenterRef.current() })
     return () => cancelAnimationFrame(id)
   }, [isVisible, recenterToken])
 
-  // Center on the star (world origin) when returning from galaxy view.
+  // Center on the star (world origin) when closing galaxy view.
   useEffect(() => {
     if (!centerOnStarToken) return
-    const id = requestAnimationFrame(() => {
-      if (centerOnStarRef.current) centerOnStarRef.current()
-    })
+    const id = requestAnimationFrame(() => { if (centerOnStarRef.current) centerOnStarRef.current() })
     return () => cancelAnimationFrame(id)
   }, [centerOnStarToken])
-
-  // Recenter after graph finishes building — runs AFTER the canvas effect has set
-  // recenterRef.current, guaranteeing we fit the correct vault's nodes.
-  // Delay gives the force simulation time to spread nodes from their spawn positions.
-  useEffect(() => {
-    if (isLoading || !isVisible) return
-    const id = setTimeout(() => {
-      if (recenterRef.current) recenterRef.current()
-    }, 900)
-    return () => clearTimeout(id)
-  }, [isLoading, isVisible])
 
   return (
     <div className="relative h-full" style={{ background: theme === 'light' ? 'var(--bg-primary)' : 'radial-gradient(ellipse at 42% 58%, #09091c 0%, #020207 100%)' }}>
@@ -1239,6 +1244,34 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
 
       {/* Floating top-right controls — hidden when another panel overlays the graph */}
       {!hasOverlay && <div className="absolute top-3 right-3 flex items-center gap-1.5" style={{ zIndex: 10 }}>
+
+        {/* View mode toggle */}
+        {onSetHomeViewMode && (
+          <>
+            {[
+              { mode: 'graph',    title: 'Graph view',    icon: <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg> },
+              { mode: 'explorer', title: 'File explorer', icon: <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg> },
+              { mode: 'treemap',  title: 'Treemap view',  icon: <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="18" rx="1"/><rect x="14" y="3" width="7" height="8" rx="1"/><rect x="14" y="15" width="7" height="6" rx="1"/></svg> },
+            ].map(({ mode, title, icon }) => {
+              const active = homeViewMode === mode
+              return (
+                <button key={mode} onClick={() => onSetHomeViewMode(mode)} title={title}
+                  className="flex items-center justify-center w-7 h-7 rounded-lg transition-all duration-150"
+                  style={{
+                    background: active ? 'rgba(124,58,237,0.35)' : 'rgba(0,0,0,0.45)',
+                    backdropFilter: 'blur(8px)',
+                    border: active ? '1px solid rgba(167,139,250,0.5)' : '1px solid rgba(255,255,255,0.08)',
+                    color: active ? 'rgba(196,181,253,1)' : 'rgba(255,255,255,0.45)',
+                  }}
+                  onMouseEnter={e => { if (!active) { e.currentTarget.style.color = 'rgba(255,255,255,0.9)'; e.currentTarget.style.background = 'rgba(0,0,0,0.65)' } }}
+                  onMouseLeave={e => { if (!active) { e.currentTarget.style.color = 'rgba(255,255,255,0.45)'; e.currentTarget.style.background = 'rgba(0,0,0,0.45)' } }}
+                >{icon}</button>
+              )
+            })}
+            <div style={{ width: 1, height: 16, background: 'rgba(255,255,255,0.12)', margin: '0 2px' }} />
+          </>
+        )}
+
         <button
           onClick={() => recenterRef.current?.()}
           title="Center"
@@ -1465,6 +1498,17 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
                   onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
                 >Archive topic</button>
               )}
+              {!node._archived && node.isTheme && !node.isJournal && !node.isTag && onConvertTopicToNote && (
+                <button
+                  onClick={() => {
+                    setCtxMenu(null)
+                    setConvertModal({ topicFolder: node._topicFolder, topicName: node.label })
+                  }}
+                  style={{ ...btnBase, color: 'var(--text-muted)' }}
+                  onMouseEnter={e => e.currentTarget.style.background = 'var(--glass-bg-strong)'}
+                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                >Convert to Note…</button>
+              )}
               {!node._archived && node.isTheme && !node.isJournal && !node.isTag && onMoveTopic && spaceGroups.length > 0 && (
                 <button
                   onClick={async () => {
@@ -1533,7 +1577,7 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
               setBhCtxMenu(null)
               const archived = files.filter(f => f.folder?.split('/')[0] === 'Archive')
               if (!archived.length) return
-              const ok = await window.electronAPI.confirmDialog('Empty Archive?', 'This permanently deletes all archived notes. This cannot be undone.')
+              const ok = await showConfirmRef.current('Empty Archive?', 'This permanently deletes all archived notes. This cannot be undone.')
               if (ok && onDeleteFiles) onDeleteFiles(archived.map(f => f.path))
             }},
           ].map(item => (
@@ -1616,6 +1660,105 @@ export default function GraphView({ files, activeFile, onOpenFile, onCreateFile,
                   onMouseEnter={e => e.currentTarget.style.background='var(--glass-bg-strong)'}
                   onMouseLeave={e => e.currentTarget.style.background='var(--glass-bg)'}
                 >Done</button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
+
+      {/* Convert to Note modal */}
+      {convertModal && (() => {
+        const topicNames = [...new Set(
+          graphRef.current.nodes
+            .filter(n => n.isTheme && !n.isJournal && !n.isTag && !n._archived && n._topicFolder !== convertModal.topicFolder)
+            .map(n => n._topicFolder)
+        )]
+        const destinations = [
+          { label: 'Space Root', value: '' },
+          ...topicNames.map(t => ({ label: t, value: t })),
+        ]
+        const isPickStep = convertModal.destination === undefined
+        const hasConflict = convertModal.conflict
+
+        return (
+          <div className="absolute inset-0 flex items-center justify-center"
+            style={{ zIndex: 300, background: 'rgba(0,0,12,0.72)', backdropFilter: 'blur(6px)' }}>
+            <div style={{
+              background: 'rgba(8,6,20,0.97)', border: '1px solid rgba(255,165,40,0.22)',
+              borderRadius: 16, padding: '22px 24px', maxWidth: 340, width: '90%', maxHeight: '70vh',
+              display: 'flex', flexDirection: 'column', gap: 14,
+              boxShadow: '0 8px 48px rgba(0,0,0,0.7), 0 0 32px rgba(255,140,30,0.10)',
+            }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <span style={{ fontSize: 14, fontWeight: 600, color: 'rgba(255,215,135,0.95)' }}>
+                  Convert &ldquo;{convertModal.topicName}&rdquo; to Note
+                </span>
+                <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)' }}>
+                  {isPickStep ? 'Move contents to:' : hasConflict ? 'Conflict detected' : `Move to "${convertModal.destination || 'Space Root'}"?`}
+                </span>
+              </div>
+
+              {isPickStep && (
+                <div style={{ overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 'calc(70vh - 130px)' }}>
+                  {destinations.map(dest => (
+                    <button key={dest.value}
+                      onClick={() => {
+                        const conflict = files.some(f =>
+                          (dest.value === '' ? f.folder === '' : f.folder === dest.value) &&
+                          f.name === convertModal.topicName
+                        )
+                        setConvertModal(m => ({ ...m, destination: dest.value, conflict }))
+                      }}
+                      style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px',
+                        borderRadius: 8, fontSize: 12, cursor: 'pointer',
+                        background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)',
+                        color: 'rgba(255,255,255,0.72)', transition: 'all 0.15s' }}
+                      onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,140,30,0.14)'; e.currentTarget.style.borderColor = 'rgba(255,140,30,0.30)'; e.currentTarget.style.color = 'rgba(255,200,80,0.95)' }}
+                      onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.07)'; e.currentTarget.style.color = 'rgba(255,255,255,0.72)' }}
+                    >{dest.label}</button>
+                  ))}
+                </div>
+              )}
+
+              {!isPickStep && hasConflict && (
+                <div style={{ fontSize: 12, color: 'rgba(255,180,80,0.9)', background: 'rgba(255,140,0,0.08)', border: '1px solid rgba(255,140,0,0.20)', borderRadius: 8, padding: '10px 12px', lineHeight: 1.5 }}>
+                  A note named &ldquo;{convertModal.topicName}&rdquo; already exists in {convertModal.destination ? `"${convertModal.destination}"` : 'Space Root'}. It will be overwritten.
+                </div>
+              )}
+
+              {!isPickStep && !hasConflict && (
+                <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.42)', lineHeight: 1.5 }}>
+                  The root note will be copied and all child notes will be moved to {convertModal.destination ? `"${convertModal.destination}"` : 'Space Root'}.
+                </div>
+              )}
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, paddingTop: 4, borderTop: '1px solid rgba(255,255,255,0.07)' }}>
+                <button
+                  onClick={() => {
+                    if (!isPickStep) { setConvertModal(m => ({ ...m, destination: undefined, conflict: false })); return }
+                    setConvertModal(null)
+                  }}
+                  style={{ padding: '7px 18px', borderRadius: 8, fontSize: 12, cursor: 'pointer',
+                    background: 'transparent', border: '1px solid rgba(255,255,255,0.10)',
+                    color: 'rgba(255,255,255,0.42)', transition: 'all 0.15s' }}
+                  onMouseEnter={e => { e.currentTarget.style.color = 'rgba(255,255,255,0.75)'; e.currentTarget.style.background = 'rgba(255,255,255,0.06)' }}
+                  onMouseLeave={e => { e.currentTarget.style.color = 'rgba(255,255,255,0.42)'; e.currentTarget.style.background = 'transparent' }}
+                >{isPickStep ? 'Cancel' : '← Back'}</button>
+                {!isPickStep && (
+                  <button
+                    onClick={async () => {
+                      const { topicFolder, destination } = convertModal
+                      setConvertModal(null)
+                      await onConvertTopicToNote(topicFolder, destination)
+                    }}
+                    style={{ padding: '7px 18px', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                      background: hasConflict ? 'linear-gradient(135deg,rgba(220,80,40,0.92),rgba(180,30,20,0.92))' : 'linear-gradient(135deg,rgba(255,155,35,0.92),rgba(215,85,0,0.92))',
+                      color: '#fff', border: '1px solid rgba(255,165,40,0.35)',
+                      boxShadow: '0 2px 12px rgba(255,120,0,0.32)', transition: 'opacity 0.15s' }}
+                    onMouseEnter={e => e.currentTarget.style.opacity = '0.82'}
+                    onMouseLeave={e => e.currentTarget.style.opacity = '1'}
+                  >{hasConflict ? 'Overwrite & Convert' : 'Convert'}</button>
+                )}
               </div>
             </div>
           </div>

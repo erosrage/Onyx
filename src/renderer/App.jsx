@@ -25,9 +25,10 @@ export default function App() {
   const [showAI, setShowAI] = useState(false)
   const [showWhiteboard, setShowWhiteboard] = useState(false)
   const [showKanban, setShowKanban] = useState(false)
-  const [showFileExplorer, setShowFileExplorer] = useState(false)
+  // homeViewMode controls which base view fills the main area: graph | explorer | treemap
+  const [homeViewMode, setHomeViewMode] = useState('graph')
   // Track which panels have been opened at least once so they stay mounted (preserve state)
-  const [everOpened, setEverOpened] = useState({ graph: true, ai: false, whiteboard: false, kanban: false, fileExplorer: false })
+  const [everOpened, setEverOpened] = useState({ graph: true, ai: false, whiteboard: false, kanban: false })
   const [revealFolder, setRevealFolder] = useState({ folder: null, n: 0 })
 
   useEffect(() => {
@@ -36,9 +37,8 @@ export default function App() {
       ai: prev.ai || showAI,
       whiteboard: prev.whiteboard || showWhiteboard,
       kanban: prev.kanban || showKanban,
-      fileExplorer: prev.fileExplorer || showFileExplorer,
     }))
-  }, [showGraph, showAI, showWhiteboard, showKanban, showFileExplorer])
+  }, [showGraph, showAI, showWhiteboard, showKanban])
 
   const applyTheme = useCallback((id) => {
     localStorage.setItem('onyx-theme', id)
@@ -143,7 +143,7 @@ export default function App() {
     setShowAI(false)
     setShowWhiteboard(false)
     setShowKanban(false)
-    setShowFileExplorer(false)
+    setHomeViewMode('graph')
     setGraphCenterOnStarToken(t => t + 1)
   }, [])
 
@@ -160,7 +160,7 @@ export default function App() {
     setShowAI(false)
     setShowWhiteboard(false)
     setShowKanban(false)
-    setShowFileExplorer(false)
+    setHomeViewMode('graph')
     setActiveFile(null)
     setGraphCenterOnStarToken(t => t + 1)
     handleSelectSpace(path)
@@ -279,6 +279,42 @@ export default function App() {
     const result = await window.electronAPI.renameFile(src, dst)
     if (result.success) await loadVault()
   }, [vaultPath, loadVault])
+
+  const handleConvertTopicToNote = useCallback(async (folderRelPath, destinationFolder) => {
+    const topicName = folderRelPath.split('/').pop()
+    const srcFolder = `${vaultPath}/${folderRelPath}`
+    const dstFolder = destinationFolder ? `${vaultPath}/${destinationFolder}` : vaultPath
+
+    // Clone root file (copy, do not move — topic folder stays intact)
+    const rootFileSrc = `${srcFolder}/${topicName}.md`
+    const readResult = await window.electronAPI.readFile(rootFileSrc)
+    if (readResult.success) {
+      const rootFileDst = `${dstFolder}/${topicName}.md`
+      await window.electronAPI.createFile(rootFileDst)
+      await window.electronAPI.writeFile(rootFileDst, readResult.content)
+    }
+
+    // Move flat child notes (excluding the root file)
+    const flatChildren = files.filter(f => f.folder === folderRelPath && f.name !== topicName)
+    for (const f of flatChildren) {
+      await window.electronAPI.renameFile(f.path, `${dstFolder}/${f.name}.md`)
+    }
+
+    // Move sub-note folders (top-level direct children that are folders)
+    const subFolderNames = [...new Set(
+      files
+        .filter(f => f.folder.startsWith(folderRelPath + '/'))
+        .map(f => f.folder.slice(folderRelPath.length + 1).split('/')[0])
+    )]
+    for (const sub of subFolderNames) {
+      await window.electronAPI.renameFile(`${srcFolder}/${sub}`, `${dstFolder}/${sub}`)
+    }
+
+    if (activeFile?.folder === folderRelPath || activeFile?.folder?.startsWith(folderRelPath + '/')) {
+      setActiveFile(null)
+    }
+    await loadVault()
+  }, [vaultPath, files, loadVault, activeFile])
 
   const handleMoveTopic = useCallback(async (folderRelPath, targetSpacePath) => {
     const topicName = folderRelPath.split('/').pop()
@@ -418,14 +454,14 @@ export default function App() {
               onToggleWhiteboard={() => { setShowWhiteboard(w => !w); setShowGraph(false); setShowAI(false); setShowKanban(false) }}
               showKanban={showKanban}
               onToggleKanban={() => { setShowKanban(k => !k); setShowAI(false); setShowWhiteboard(false) }}
-              showFileExplorer={showFileExplorer}
-              onToggleFileExplorer={() => { setShowFileExplorer(f => !f); setShowAI(false); setShowWhiteboard(false); setShowKanban(false) }}
+
               showNotes={showNotes}
               onShowNotes={() => { setShowNotes(n => !n); setShowAI(false); setShowWhiteboard(false); setShowKanban(false) }}
               theme={theme}
               onSetTheme={applyTheme}
               onMoveFile={handleMoveFile}
               onMoveTopic={handleMoveTopic}
+              onConvertTopicToNote={handleConvertTopicToNote}
               spaceGroups={spaceGroups}
               onArchiveTopic={handleArchiveTopic}
               onUnarchiveTopic={handleUnarchiveTopic}
@@ -446,30 +482,21 @@ export default function App() {
           />
 
           {/* Main content — all panels stay mounted once opened; CSS hides inactive ones */}
+          {/* Main content — all panels stay mounted once opened; CSS hides inactive ones */}
           <div className="flex-1 overflow-hidden relative">
-            {/* Empty state — only when no file is open and no panel is active */}
-            {!activeFile && !showGraph && !showNotes && !showAI && !showWhiteboard && !showKanban && (
-              <div className="flex h-full items-center justify-center flex-col gap-3">
-                <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.10 }}>
-                  <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
-                  <polyline points="14 2 14 8 20 8"/>
-                  <line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>
-                </svg>
-                <p className="text-sm font-medium tracking-wide" style={{ color: 'var(--text-muted)' }}>Select a note to start editing</p>
-                <p className="text-sm" style={{ color: 'var(--text-dim)' }}>or create a new one from the sidebar</p>
-              </div>
-            )}
 
-            {/* Graph — stays mounted after first open */}
+            {/* ── Home base views (graph / explorer / treemap) ── */}
+            {/* Graph */}
             {everOpened.graph && (
-              <div className="absolute inset-0" style={{ display: showGraph ? 'block' : 'none' }}>
+              <div className="absolute inset-0" style={{ display: homeViewMode === 'graph' && showGraph ? 'block' : 'none' }}>
                 <GraphView files={files} activeFile={activeFile} onOpenFile={handleOpenFile} onCreateFile={handleCreateFile} theme={theme} onArchiveTopic={handleArchiveTopic}
                   onArchiveFile={handleArchiveFile}
                   onUnarchiveTopic={handleUnarchiveTopic}
                   onUnarchiveFile={handleUnarchiveFile}
                   onRevealFolder={folder => { setRevealFolder(p => ({ folder, n: p.n + 1 })); setShowGraph(false) }}
-                  vaultPath={vaultPath} onSwitchSpace={handleOpenGalaxy} isVisible={showGraph} recenterToken={graphRecenterToken} centerOnStarToken={graphCenterOnStarToken}
+                  vaultPath={vaultPath} onSwitchSpace={handleOpenGalaxy} isVisible={homeViewMode === 'graph' && showGraph} recenterToken={graphRecenterToken} centerOnStarToken={graphCenterOnStarToken}
                   hasOverlay={showKanban || showNotes || showAI}
+                  homeViewMode={homeViewMode} onSetHomeViewMode={setHomeViewMode}
                   onDeleteFiles={async (paths) => {
                     for (const p of paths) await window.electronAPI.deleteFile(p)
                     await loadVault()
@@ -477,19 +504,58 @@ export default function App() {
                   }}
                   onMoveFile={handleMoveFile}
                   onMoveTopic={handleMoveTopic}
+                  onConvertTopicToNote={handleConvertTopicToNote}
                   spaceGroups={spaceGroups}
                 />
               </div>
             )}
 
-            {/* Notes Panel — sits above graph; translucent when both are active */}
+            {/* File Explorer (list view) */}
+            <div className="absolute inset-0 flex flex-col" style={{ display: homeViewMode === 'explorer' && !showNotes && !showAI && !showWhiteboard && !showKanban ? 'flex' : 'none' }}>
+              <FileExplorer
+                key={vaultPath}
+                vaultPath={vaultPath}
+                files={files}
+                folders={folders}
+                activeFile={activeFile}
+                onOpenFile={handleOpenFile}
+                onCreateFile={handleCreateFile}
+                onDeleteFile={handleDeleteFile}
+                onDeleteTopic={handleDeleteTopic}
+                onRefresh={loadVault}
+                viewMode="list"
+                homeViewMode={homeViewMode}
+                onSetHomeViewMode={setHomeViewMode}
+              />
+            </div>
+
+            {/* Treemap view */}
+            <div className="absolute inset-0 flex flex-col" style={{ display: homeViewMode === 'treemap' && !showNotes && !showAI && !showWhiteboard && !showKanban ? 'flex' : 'none' }}>
+              <FileExplorer
+                key={`treemap-${vaultPath}`}
+                vaultPath={vaultPath}
+                files={files}
+                folders={folders}
+                activeFile={activeFile}
+                onOpenFile={handleOpenFile}
+                onCreateFile={handleCreateFile}
+                onDeleteFile={handleDeleteFile}
+                onDeleteTopic={handleDeleteTopic}
+                onRefresh={loadVault}
+                viewMode="treemap"
+                homeViewMode={homeViewMode}
+                onSetHomeViewMode={setHomeViewMode}
+              />
+            </div>
+
+            {/* Notes Panel — sits above everything; translucent when graph is base */}
             <div
               className="absolute inset-0 flex flex-col"
               style={{
                 display: showNotes ? 'flex' : 'none',
-                background: showGraph ? 'rgba(10,8,20,0.45)' : undefined,
-                backdropFilter: showGraph ? 'blur(6px)' : undefined,
-                WebkitBackdropFilter: showGraph ? 'blur(6px)' : undefined,
+                background: homeViewMode === 'graph' ? 'rgba(10,8,20,0.45)' : undefined,
+                backdropFilter: homeViewMode === 'graph' ? 'blur(6px)' : undefined,
+                WebkitBackdropFilter: homeViewMode === 'graph' ? 'blur(6px)' : undefined,
               }}
             >
               {activeFile
@@ -508,70 +574,27 @@ export default function App() {
               }
             </div>
 
-            {/* AI Harness — stays mounted after first open, preserving terminal session */}
-            {/* When graph is also active, background becomes translucent so nodes show through */}
+            {/* AI Harness */}
             {everOpened.ai && (
-              <div
-                className="absolute inset-0 flex flex-col"
-                style={{
-                  display: showAI ? 'flex' : 'none',
-                  background: showGraph ? 'rgba(10,8,20,0.45)' : undefined,
-                  backdropFilter: showGraph ? 'blur(6px)' : undefined,
-                  WebkitBackdropFilter: showGraph ? 'blur(6px)' : undefined,
-                }}
-              >
+              <div className="absolute inset-0 flex flex-col" style={{ display: showAI ? 'flex' : 'none' }}>
                 <AIHarness currentFile={activeFile} />
               </div>
             )}
 
-            {/* Whiteboard — stays mounted after first open */}
+            {/* Whiteboard */}
             {everOpened.whiteboard && (
               <div className="absolute inset-0" style={{ display: showWhiteboard ? 'block' : 'none' }}>
                 <Whiteboard vaultPath={vaultPath} />
               </div>
             )}
 
-            {/* Kanban — stays mounted after first open */}
-            {/* When graph is also active, background becomes translucent so nodes show through */}
+            {/* Kanban */}
             {everOpened.kanban && (
-              <div
-                className="absolute inset-0 flex flex-col"
-                style={{
-                  display: showKanban ? 'flex' : 'none',
-                  background: showGraph ? 'rgba(10,8,20,0.45)' : undefined,
-                  backdropFilter: showGraph ? 'blur(6px)' : undefined,
-                  WebkitBackdropFilter: showGraph ? 'blur(6px)' : undefined,
-                }}
-              >
+              <div className="absolute inset-0 flex flex-col" style={{ display: showKanban ? 'flex' : 'none' }}>
                 <KanbanBoard files={files} activeFile={activeFile} onOpenFile={handleOpenFile} showKanban={showKanban} />
               </div>
             )}
 
-            {/* File Explorer — stays mounted after first open */}
-            {everOpened.fileExplorer && (
-              <div
-                className="absolute inset-0 flex flex-col"
-                style={{
-                  display: showFileExplorer ? 'flex' : 'none',
-                  background: showGraph ? 'rgba(10,8,20,0.45)' : undefined,
-                  backdropFilter: showGraph ? 'blur(6px)' : undefined,
-                  WebkitBackdropFilter: showGraph ? 'blur(6px)' : undefined,
-                }}
-              >
-                <FileExplorer
-                  key={vaultPath}
-                  vaultPath={vaultPath}
-                  files={files}
-                  folders={folders}
-                  activeFile={activeFile}
-                  onOpenFile={handleOpenFile}
-                  onCreateFile={handleCreateFile}
-                  onDeleteFile={handleDeleteFile}
-                  onDeleteTopic={handleDeleteTopic}
-                  onRefresh={loadVault}
-                />
-              </div>
-            )}
           </div>
           </div>{/* end workspace zoom wrapper */}
 

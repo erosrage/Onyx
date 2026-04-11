@@ -250,6 +250,7 @@ export default function GalaxyView({ spaceGroups, currentSpacePath, onSelectSpac
   const bhCursorHoverRef = useRef(false)
   const pulseRef         = useRef({ startT: null })
   const bhSpeedRef       = useRef(0.359)
+  const bhScaleRef       = useRef(1.0)
   const archivedCountRef = useRef(0)
 
   const canvasRef       = useRef(null)
@@ -349,7 +350,40 @@ export default function GalaxyView({ spaceGroups, currentSpacePath, onSelectSpac
   }, [])
 
   const handleRecenter = useCallback(() => {
-    pan.current = { x: 0, y: 0 }; tilt.current = { x: 0, y: 0 }; zoom.current = 1
+    tilt.current = { x: 0, y: 0 }
+    const canvas = canvasRef.current
+    const spaces = spacesRef.current
+    if (!canvas || !spaces.length) {
+      pan.current = { x: 0, y: 0 }; zoom.current = 1
+      animateSpread(1)
+      return
+    }
+    const W = canvas.width, H = canvas.height
+    if (W <= 0 || H <= 0) { pan.current = { x: 0, y: 0 }; zoom.current = 1; animateSpread(1); return }
+    const nonCurrent = spaces.filter(s => !s.isCurrent)
+    // Project all nodes at zoom=1, pan=0, tilt=0 to get their offsets from screen center.
+    // These offsets scale linearly with zoom, so we can compute the fit zoom from them.
+    let minWx = Infinity, maxWx = -Infinity, minWy = Infinity, maxWy = -Infinity
+    for (const space of spaces) {
+      let nx, ny, nz
+      if (space.isCurrent) { nx = 50; ny = 50; nz = 0 }
+      else { const p = milkyWayPos(nonCurrent.indexOf(space), nonCurrent.length); nx = p.x; ny = p.y; nz = p.z }
+      const { sx, sy } = project(nx, ny, nz, W, H, { x: 0, y: 0 }, { x: 0, y: 0 }, 1)
+      const wx = sx - W / 2, wy = sy - H / 2
+      minWx = Math.min(minWx, wx); maxWx = Math.max(maxWx, wx)
+      minWy = Math.min(minWy, wy); maxWy = Math.max(maxWy, wy)
+    }
+    const pad = 90 // px — leaves room for node bodies + labels
+    const halfSpanX = Math.max((maxWx - minWx) / 2, 1)
+    const halfSpanY = Math.max((maxWy - minWy) / 2, 1)
+    const zoomFit = Math.min(Math.max(Math.min(
+      (W / 2 - pad) / halfSpanX,
+      (H / 2 - pad) / halfSpanY
+    ), 0.25), 2.5)
+    // Pan so the bounding box center lands on screen center
+    const cx = (minWx + maxWx) / 2, cy = (minWy + maxWy) / 2
+    pan.current = { x: -cx * zoomFit, y: -cy * zoomFit }
+    zoom.current = zoomFit
     animateSpread(1)
   }, [animateSpread])
   const handleGravity     = useCallback(() => animateSpread(0.18), [animateSpread])
@@ -406,8 +440,11 @@ export default function GalaxyView({ spaceGroups, currentSpacePath, onSelectSpac
     prevTsRef.current = ts
     timeRef.current = t
     // Smooth speed ramp — 3× faster when cursor hovers over BH
-    const _bhTarget = bhCursorHoverRef.current ? 1.08 : 0.359
-    bhSpeedRef.current += (_bhTarget - bhSpeedRef.current) * Math.min(dt * 4, 1)
+    const _bhAnyHover = bhCursorHoverRef.current || overBHRef.current
+    const _bhTarget = _bhAnyHover ? 1.08 : 0.359
+    const _bhLerp = Math.min(dt * 14, 1)
+    bhSpeedRef.current += (_bhTarget - bhSpeedRef.current) * _bhLerp
+    bhScaleRef.current += ((_bhAnyHover ? 1.28 : 1.0) - bhScaleRef.current) * _bhLerp
 
     ctx.clearRect(0, 0, W, H)
 
@@ -657,19 +694,20 @@ export default function GalaxyView({ spaceGroups, currentSpacePath, onSelectSpac
     // ── Black hole (bottom-right, canvas-rendered) ────────────────────────────
     {
       const bhX = W - 72, bhY = H - 72
-      const bhActive = overBHRef.current
+      const bhActive = bhCursorHoverRef.current || overBHRef.current
+      const bhR = BH_R * bhScaleRef.current
       // Drag-radius hint — dashed ring shown while dragging a space star
       if (draggingStarRef.current) {
-        ctx.beginPath(); ctx.arc(bhX, bhY, BH_R * 1.8, 0, Math.PI * 2)
+        ctx.beginPath(); ctx.arc(bhX, bhY, bhR * 1.8, 0, Math.PI * 2)
         ctx.strokeStyle = 'rgba(255,140,30,0.28)'; ctx.lineWidth = 1
         ctx.setLineDash([4, 5]); ctx.stroke(); ctx.setLineDash([])
       }
       // Outer glow — warm orange/amber
-      const bhGrad = ctx.createRadialGradient(bhX, bhY, BH_R * 0.3, bhX, bhY, BH_R * 2.8)
-      bhGrad.addColorStop(0,   bhActive ? 'rgba(255,160,40,0.52)' : 'rgba(255,110,15,0.28)')
-      bhGrad.addColorStop(0.5, bhActive ? 'rgba(200,60,0,0.22)'  : 'rgba(180,50,0,0.10)')
+      const bhGrad = ctx.createRadialGradient(bhX, bhY, bhR * 0.3, bhX, bhY, bhR * 2.8)
+      bhGrad.addColorStop(0,   bhActive ? 'rgba(255,160,40,0.62)' : 'rgba(255,110,15,0.28)')
+      bhGrad.addColorStop(0.5, bhActive ? 'rgba(200,60,0,0.28)'  : 'rgba(180,50,0,0.10)')
       bhGrad.addColorStop(1,   'rgba(0,0,0,0)')
-      ctx.beginPath(); ctx.arc(bhX, bhY, BH_R * 2.8, 0, Math.PI * 2)
+      ctx.beginPath(); ctx.arc(bhX, bhY, bhR * 2.8, 0, Math.PI * 2)
       ctx.fillStyle = bhGrad; ctx.fill()
       // Event horizon disk — scattered/broken particle field (x-axis orbit)
       ctx.save()
@@ -682,14 +720,14 @@ export default function GalaxyView({ spaceGroups, currentSpacePath, onSelectSpac
         if (r4 < 0.20) continue
         const angle = (i / 209) * Math.PI * 2 + (r1 - 0.5) * 0.50 + t * bhSpeedRef.current
         const radF  = r2
-        const diskR = BH_R * (0.88 + radF * 0.90)
+        const diskR = bhR * (0.88 + radF * 0.90)
         const ex = Math.cos(angle) * diskR
         const ey = Math.sin(angle) * diskR * 0.30
         const pSize = 0.2 + r3 * 0.9
         const heat  = 1 - radF
         const tw = 0.60 + 0.40 * Math.sin(t * 1.6 + r1 * 6.283)
         const depth = 0.75 + 0.25 * Math.sin(angle)
-        const baseA = bhActive ? 0.50 + 0.45 * heat : 0.22 + 0.28 * heat
+        const baseA = bhActive ? 0.60 + 0.38 * heat : 0.22 + 0.28 * heat
         ctx.globalAlpha = baseA * (0.40 + 0.60 * r3) * tw * depth
         ctx.beginPath(); ctx.arc(ex, ey, pSize, 0, Math.PI * 2)
         ctx.fillStyle = heat > 0.60 ? (bhActive ? '#fff5cc' : '#ffd050')
@@ -700,15 +738,15 @@ export default function GalaxyView({ spaceGroups, currentSpacePath, onSelectSpac
       ctx.globalAlpha = 1
       ctx.restore()
       // Dark singularity
-      ctx.beginPath(); ctx.arc(bhX, bhY, BH_R * 0.62, 0, Math.PI * 2)
+      ctx.beginPath(); ctx.arc(bhX, bhY, bhR * 0.62, 0, Math.PI * 2)
       ctx.fillStyle = '#000'; ctx.fill()
       // Photon ring glow — layered thin strokes for soft halo
       const ringPulse = 0.75 + 0.25 * Math.sin(t * 1.2)
-      ctx.beginPath(); ctx.arc(bhX, bhY, BH_R * 0.62, 0, Math.PI * 2)
-      ctx.strokeStyle = bhActive ? `rgba(255,240,180,${(0.12 * ringPulse).toFixed(3)})` : `rgba(255,210,120,${(0.08 * ringPulse).toFixed(3)})`
-      ctx.lineWidth = 5; ctx.stroke()
-      ctx.beginPath(); ctx.arc(bhX, bhY, BH_R * 0.62, 0, Math.PI * 2)
-      ctx.strokeStyle = bhActive ? `rgba(255,255,220,${(0.55 * ringPulse).toFixed(3)})` : `rgba(255,200,80,${(0.38 * ringPulse).toFixed(3)})`
+      ctx.beginPath(); ctx.arc(bhX, bhY, bhR * 0.62, 0, Math.PI * 2)
+      ctx.strokeStyle = bhActive ? `rgba(255,240,180,${(0.18 * ringPulse).toFixed(3)})` : `rgba(255,210,120,${(0.08 * ringPulse).toFixed(3)})`
+      ctx.lineWidth = bhActive ? 7 : 5; ctx.stroke()
+      ctx.beginPath(); ctx.arc(bhX, bhY, bhR * 0.62, 0, Math.PI * 2)
+      ctx.strokeStyle = bhActive ? `rgba(255,255,220,${(0.75 * ringPulse).toFixed(3)})` : `rgba(255,200,80,${(0.38 * ringPulse).toFixed(3)})`
       ctx.lineWidth = 0.8; ctx.stroke()
       // Gravitational pulse rings
       if (pulseRef.current.startT !== null) {
@@ -717,7 +755,7 @@ export default function GalaxyView({ spaceGroups, currentSpacePath, onSelectSpac
           for (let _ri = 0; _ri < 3; _ri++) {
             const _re = _pe - _ri * 0.22; if (_re <= 0) continue
             const _rp = Math.min(_re / 0.9, 1)
-            ctx.beginPath(); ctx.arc(bhX, bhY, BH_R * (1.2 + _rp * 4.5), 0, Math.PI * 2)
+            ctx.beginPath(); ctx.arc(bhX, bhY, bhR * (1.2 + _rp * 4.5), 0, Math.PI * 2)
             ctx.strokeStyle = `rgba(255,170,40,${((1 - _rp) * 0.55).toFixed(3)})`
             ctx.lineWidth = 1.2; ctx.stroke()
           }
@@ -727,10 +765,10 @@ export default function GalaxyView({ spaceGroups, currentSpacePath, onSelectSpac
       ctx.font = bhActive ? 'bold 10px -apple-system, sans-serif' : '9px -apple-system, sans-serif'
       ctx.fillStyle = bhActive ? 'rgba(255,210,80,0.95)' : 'rgba(220,130,30,0.55)'
       ctx.textAlign = 'center'
-      ctx.fillText(bhActive ? '⬤ Archive' : 'Archive', bhX, bhY + BH_R + 15)
+      ctx.fillText(bhActive ? '⬤ Archive' : 'Archive', bhX, bhY + bhR + 15)
       // Archive count badge
       if (archivedCountRef.current > 0) {
-        const _bx = bhX + BH_R * 0.74, _by = bhY - BH_R * 0.74
+        const _bx = bhX + bhR * 0.74, _by = bhY - bhR * 0.74
         ctx.beginPath(); ctx.arc(_bx, _by, 8, 0, Math.PI * 2)
         ctx.fillStyle = 'rgba(255,140,30,0.92)'; ctx.fill()
         ctx.font = 'bold 8px -apple-system, sans-serif'; ctx.fillStyle = '#000'
@@ -904,6 +942,7 @@ export default function GalaxyView({ spaceGroups, currentSpacePath, onSelectSpac
         style={{ position:'absolute', inset:0, display:'block' }}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
+        onMouseLeave={() => { bhCursorHoverRef.current = false }}
       />
 
       {/* Header */}
